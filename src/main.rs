@@ -2,6 +2,7 @@ use crate::opts::parse;
 use crate::pull::Pull;
 use crate::push::Push;
 
+mod error;
 mod opts;
 mod pull;
 mod push;
