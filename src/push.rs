@@ -1,6 +1,6 @@
 use std::fs;
 use std::fs::{DirEntry, Metadata, ReadDir};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::{Arg, ArgMatches, Command};
 use sha256::digest_file;
@@ -8,18 +8,18 @@ use uuid::Uuid;
 
 use crate::error::Error;
 
-pub struct Push<'t> {
-    opts: PushOpts<'t>,
+pub struct Push {
+    opts: PushOpts,
 }
 
 pub const CMD: &str = "push";
 
-struct PushOpts<'t> {
-    folder: &'t str,
-    database: &'t str,
+struct PushOpts {
+    folder: PathBuf,
+    database: String,
 }
 
-impl<'t> Push<'t> {
+impl Push {
     pub fn cli() -> Command<'static> {
         Command::new(CMD)
             .about("copy local folder to cloud")
@@ -46,18 +46,21 @@ impl<'t> Push<'t> {
     pub fn new(args: &ArgMatches) -> Push {
         Push {
             opts: PushOpts {
-                folder: args.value_of("folder").unwrap(),
-                database: args.value_of("database").unwrap(),
+                folder: PathBuf::from(args.value_of("folder").unwrap()),
+                database: args.value_of("database").unwrap().to_string(),
             },
         }
     }
 
     pub fn execute(&self) {
-        println!("Pushing {} using {}", self.opts.folder, self.opts.database);
-        let path = Path::new(self.opts.folder);
-        match fs::read_dir(path).map_err(Error::from) {
-            Err(e) => self.print_err(&path, e),
-            Ok(dir) => self.visit_dir(&path, dir),
+        println!(
+            "Pushing {} using {}",
+            self.opts.folder.display(),
+            self.opts.database
+        );
+        match fs::read_dir(&self.opts.folder).map_err(Error::from) {
+            Err(e) => self.print_err(&self.opts.folder, e),
+            Ok(dir) => self.visit_dir(&self.opts.folder, dir),
         }
     }
 
