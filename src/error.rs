@@ -1,5 +1,6 @@
 use std::fmt::{Display, Formatter};
 use std::io;
+use std::path::StripPrefixError;
 
 pub(crate) struct Error {
     msg: String,
@@ -15,6 +16,24 @@ impl Display for Error {
 
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
+        Error { msg: e.to_string() }
+    }
+}
+
+impl From<rusqlite::Error> for Error {
+    fn from(e: rusqlite::Error) -> Self {
+        Error { msg: e.to_string() }
+    }
+}
+
+impl From<refinery::Error> for Error {
+    fn from(e: refinery::Error) -> Self {
+        Error { msg: e.to_string() }
+    }
+}
+
+impl From<StripPrefixError> for Error {
+    fn from(e: StripPrefixError) -> Self {
         Error { msg: e.to_string() }
     }
 }

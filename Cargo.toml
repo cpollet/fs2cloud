@@ -9,5 +9,7 @@ edition = "2021"
 [dependencies]
 clap = { version = "3.1.18", features = ["cargo"] }
 clap_complete = "3.1.4"
+refinery = { version = "0.8.4", features = ["rusqlite"] }
+rusqlite = { version = "0.26.3", features = ["bundled"] }
 sha256 = "1.0.3"
 uuid = { version = "1.1.1", features = ["v4", "fast-rng"] }

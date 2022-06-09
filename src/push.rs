@@ -2,22 +2,20 @@ use std::fs;
 use std::fs::{DirEntry, Metadata, ReadDir};
 use std::path::{Path, PathBuf};
 
+use crate::database::open;
 use clap::{Arg, ArgMatches, Command};
+use rusqlite::Connection;
 use sha256::digest_file;
 use uuid::Uuid;
 
 use crate::error::Error;
 
 pub struct Push {
-    opts: PushOpts,
+    folder: PathBuf,
+    database: Connection,
 }
 
 pub const CMD: &str = "push";
-
-struct PushOpts {
-    folder: PathBuf,
-    database: String,
-}
 
 impl Push {
     pub fn cli() -> Command<'static> {
@@ -43,24 +41,26 @@ impl Push {
             )
     }
 
-    pub fn new(args: &ArgMatches) -> Push {
-        Push {
-            opts: PushOpts {
+    pub fn new(args: &ArgMatches) -> Option<Push> {
+        let database_path = Path::new(args.value_of("database").unwrap());
+        let database = open(database_path);
+        match database {
+            Ok(connection) => Some(Push {
                 folder: PathBuf::from(args.value_of("folder").unwrap()),
-                database: args.value_of("database").unwrap().to_string(),
-            },
+                database: connection,
+            }),
+            Err(e) => {
+                eprintln!("Error opening database {}: {}", database_path.display(), e);
+                None
+            }
         }
     }
 
     pub fn execute(&self) {
-        println!(
-            "Pushing {} using {}",
-            self.opts.folder.display(),
-            self.opts.database
-        );
-        match fs::read_dir(&self.opts.folder).map_err(Error::from) {
-            Err(e) => self.print_err(&self.opts.folder, e),
-            Ok(dir) => self.visit_dir(&self.opts.folder, dir),
+        println!("Pushing {}", self.folder.display(),);
+        match fs::read_dir(&self.folder).map_err(Error::from) {
+            Err(e) => self.print_err(&self.folder, e),
+            Ok(dir) => self.visit_dir(&self.folder, dir),
         }
     }
 
@@ -84,7 +84,7 @@ impl Push {
             Err(e) => self.print_err(&path, e),
             Ok(metadata) => {
                 if metadata.is_file() {
-                    self.handle_file(entry, metadata);
+                    self.visit_file(entry, metadata);
                 } else if metadata.is_dir() {
                     match path.read_dir().map_err(Error::from) {
                         Err(e) => self.print_err(&path, e),
@@ -97,15 +97,29 @@ impl Push {
         }
     }
 
-    fn handle_file(&self, file: DirEntry, metadata: Metadata) {
-        match digest_file(file.path()).map_err(Error::from) {
-            Err(e) => self.print_err(&file.path(), e),
-            Ok(sum) => {
-                println!("{}", file.path().display());
-                println!("  uuid={}", Uuid::new_v4());
-                println!("  size={} bytes", metadata.len());
-                println!("  sha256={}", sum)
-            }
+    fn visit_file(&self, file: DirEntry, metadata: Metadata) {
+        println!(" * {}", file.path().display());
+        if let Err(e) = digest_file(file.path())
+            .map_err(|e| Error::from(e))
+            .and_then(|sum| match file.path().strip_prefix(&self.folder) {
+                Err(e) => Err(Error::from(e)),
+                Ok(path) => Ok((sum, path.into())),
+            })
+            .and_then(|data: (String, PathBuf)| {
+                self.database
+                    .execute(
+                        include_str!("sql/insert_file.sql"),
+                        &[
+                            (":uuid", &Uuid::new_v4().to_string()),
+                            (":path", &data.1.display().to_string()),
+                            (":checksum", &data.0.to_string()),
+                            (":size", &metadata.len().to_string()),
+                        ],
+                    )
+                    .map_err(Error::from)
+            })
+        {
+            self.print_err(&file.path(), e);
         }
     }
 }
