@@ -4,6 +4,7 @@ use crate::push::Push;
 
 mod database;
 mod error;
+mod files_repository;
 mod opts;
 mod pull;
 mod push;
