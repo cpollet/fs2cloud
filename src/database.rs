@@ -8,10 +8,10 @@ mod embedded {
 }
 
 pub(crate) fn open(path: &Path) -> Result<Connection, Error> {
-    Connection::open(path)
-        .map_err(|e| Error::from(e))
-        .and_then(|mut db| match embedded::migrations::runner().run(&mut db) {
-            Ok(_) => Ok(db),
-            Err(e) => Err(e.into()),
-        })
+    let mut db = Connection::open(path).map_err(Error::from)?;
+
+    match embedded::migrations::runner().run(&mut db) {
+        Ok(_) => Ok(db),
+        Err(e) => Err(e.into()),
+    }
 }

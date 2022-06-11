@@ -6,6 +6,14 @@ pub(crate) struct Error {
     msg: String,
 }
 
+impl Error {
+    pub(crate) fn new(msg: &str) -> Error {
+        Error {
+            msg: msg.to_string(),
+        }
+    }
+}
+
 impl Error {}
 
 impl Display for Error {
@@ -34,6 +42,11 @@ impl From<refinery::Error> for Error {
 
 impl From<StripPrefixError> for Error {
     fn from(e: StripPrefixError) -> Self {
+        Error { msg: e.to_string() }
+    }
+}
+impl From<anyhow::Error> for Error {
+    fn from(e: anyhow::Error) -> Self {
         Error { msg: e.to_string() }
     }
 }

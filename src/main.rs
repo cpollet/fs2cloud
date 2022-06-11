@@ -2,10 +2,13 @@ use crate::opts::parse;
 use crate::pull::Pull;
 use crate::push::Push;
 
+mod chunk_buf_reader;
+mod configuration_repository;
 mod database;
 mod error;
 mod files_repository;
 mod opts;
+mod pgp;
 mod pull;
 mod push;
 

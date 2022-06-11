@@ -7,9 +7,13 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+anyhow = "1.0.57"
+byte-unit = "4.0.14"
 clap = { version = "3.1.18", features = ["cargo"] }
 clap_complete = "3.1.4"
+fallible-iterator = "0.2.0"
 refinery = { version = "0.8.4", features = ["rusqlite"] }
 rusqlite = { version = "0.26.3", features = ["bundled"] }
+sequoia-openpgp = "1.9.0"
 sha256 = "1.0.3"
 uuid = { version = "1.1.1", features = ["v4", "fast-rng"] }
