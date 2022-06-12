@@ -45,7 +45,7 @@ impl Pgp {
         }
     }
 
-    pub(crate) fn encrypt<R, W>(&self, reader: &mut R, writer: W) -> Result<u64, Error>
+    pub(crate) fn encrypt<R, W>(&self, reader: &mut R, writer: &mut W) -> Result<usize, Error>
     where
         R: Read,
         W: Write + Send + Sync,
@@ -65,7 +65,7 @@ impl Pgp {
 
         let read = io::copy(reader, &mut message).map_err(Error::from)?;
         match message.finalize().map_err(Error::from) {
-            Ok(_) => Ok(read),
+            Ok(_) => Ok(read as usize),
             Err(e) => Err(e),
         }
     }

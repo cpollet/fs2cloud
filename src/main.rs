@@ -8,6 +8,7 @@ mod database;
 mod error;
 mod files_repository;
 mod opts;
+mod parts_repository;
 mod pgp;
 mod pull;
 mod push;

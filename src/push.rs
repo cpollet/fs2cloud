@@ -1,7 +1,7 @@
 use byte_unit::Byte;
 use std::fs;
 use std::fs::{DirEntry, Metadata, ReadDir};
-use std::io::{BufReader, BufWriter};
+use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -10,16 +10,17 @@ use crate::configuration_repository::ConfigurationRepository;
 use crate::database::open;
 use clap::{Arg, ArgMatches, Command};
 use rusqlite::Connection;
-use sha256::digest_file;
 use uuid::Uuid;
 
 use crate::error::Error;
 use crate::files_repository::{File, FilesRepository};
+use crate::parts_repository::{Part, PartsRepository};
 use crate::pgp::Pgp;
 
 pub struct Push {
     folder: PathBuf,
     files_repository: FilesRepository,
+    parts_repository: PartsRepository,
     configuration: ConfigurationRepository,
     pgp: Pgp,
 }
@@ -86,7 +87,8 @@ impl Push {
 
         Some(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
-            files_repository: FilesRepository::new(database),
+            files_repository: FilesRepository::new(database.clone()),
+            parts_repository: PartsRepository::new(database),
             configuration,
             pgp,
         })
@@ -183,7 +185,7 @@ impl Push {
             Err(e) => self.print_err(&file.path(), e),
             Ok(Some(_)) => println!(" * {}: skip", local_path.display()),
             Ok(None) => {
-                match digest_file(file.path())
+                match sha256::digest_file(file.path())
                     .map_err(Error::from)
                     .and_then(|sum| {
                         self.files_repository.insert(File {
@@ -209,24 +211,41 @@ impl Push {
 
         let mut chunk: u64 = 0;
         loop {
-            let mut part_path = path.display().to_string();
-            part_path.push_str(&format!(".p{}", chunk));
-            let part_path = Path::new(&part_path);
+            let mut writer = Vec::with_capacity(chunk_size);
+            let mut reader = ChunkBufReader::new(&mut reader, chunk_size);
 
-            let writer = BufWriter::new(fs::File::create(part_path).unwrap());
-
-            let mut capped_reader = ChunkBufReader::new(&mut reader, chunk_size);
-            match self.pgp.encrypt(&mut capped_reader, writer) {
+            match self.pgp.encrypt(&mut reader, &mut writer) {
                 Err(e) => {
                     eprintln!("Unable to encrypt chunk {} of {}: {}", chunk, file.path, e);
                     break;
                 }
                 Ok(size) => {
-                    if (size as usize) < chunk_size {
-                        println!("Read {} bytes", size);
+                    if size == 0 {
                         break;
                     } else {
-                        chunk += 1
+                        match self.parts_repository.insert(Part {
+                            uuid: Uuid::new_v4(),
+                            file_uuid: file.uuid,
+                            idx: chunk,
+                            sha256: sha256::digest_bytes(writer.as_slice()),
+                            size: writer.len(),
+                            payload_size: size as usize,
+                        }) {
+                            Err(e) => {
+                                eprintln!(
+                                    "Unable to persist chunk {} of {}: {}",
+                                    chunk, file.path, e
+                                );
+                                break;
+                            }
+                            Ok(_part) => {
+                                if (size as usize) < chunk_size {
+                                    break;
+                                } else {
+                                    chunk += 1
+                                }
+                            }
+                        }
                     }
                 }
             }
