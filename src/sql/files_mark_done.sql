@@ -1,0 +1,1 @@
+update files set status='DONE' where uuid=:uuid

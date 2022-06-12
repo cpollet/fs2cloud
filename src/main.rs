@@ -12,6 +12,7 @@ mod parts_repository;
 mod pgp;
 mod pull;
 mod push;
+mod s3;
 
 fn main() {
     if let Some(args) = parse() {

@@ -17,7 +17,7 @@ pub struct Pgp {
 }
 
 impl Pgp {
-    pub(crate) fn new(cert_file: &str, ascii_armor: bool) -> Result<Self, Error> {
+    pub fn new(cert_file: &str, ascii_armor: bool) -> Result<Self, Error> {
         println!("Reading key from {}", cert_file);
         let policy = StandardPolicy::new();
         let mode = KeyFlags::empty().set_transport_encryption();
@@ -45,7 +45,7 @@ impl Pgp {
         }
     }
 
-    pub(crate) fn encrypt<R, W>(&self, reader: &mut R, writer: &mut W) -> Result<usize, Error>
+    pub fn encrypt<R, W>(&self, reader: &mut R, writer: &mut W) -> Result<usize, Error>
     where
         R: Read,
         W: Write + Send + Sync,

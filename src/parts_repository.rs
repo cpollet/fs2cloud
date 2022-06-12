@@ -37,7 +37,7 @@ impl PartsRepository {
         PartsRepository { db }
     }
 
-    pub(crate) fn insert(&self, part: Part) -> Result<Part, Error> {
+    pub fn insert(&self, part: Part) -> Result<Part, Error> {
         self.db
             .execute(
                 include_str!("sql/parts_insert.sql"),
@@ -52,5 +52,12 @@ impl PartsRepository {
             )
             .map_err(Error::from)
             .map(|_| part)
+    }
+
+    pub fn mark_done(&self, uuid: Uuid) {
+        self.db.execute(
+            include_str!("sql/parts_mark_done.sql"),
+            &[(":uuid", &uuid.to_string())],
+        );
     }
 }

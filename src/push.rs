@@ -16,6 +16,7 @@ use crate::error::Error;
 use crate::files_repository::{File, FilesRepository};
 use crate::parts_repository::{Part, PartsRepository};
 use crate::pgp::Pgp;
+use crate::s3::{CloudStore, S3Simulation, S3};
 
 pub struct Push {
     folder: PathBuf,
@@ -23,12 +24,13 @@ pub struct Push {
     parts_repository: PartsRepository,
     configuration: ConfigurationRepository,
     pgp: Pgp,
+    s3: Box<dyn CloudStore>,
 }
 
 pub const CMD: &str = "push";
 
 const MAX_CHUNK_SIZE: &str = "1GB";
-const DEFAULT_CHUNK_SIZE: &str = "100MB";
+const DEFAULT_CHUNK_SIZE: &str = "90MB";
 
 impl Push {
     pub fn cli() -> Command<'static> {
@@ -56,41 +58,109 @@ impl Push {
                 Arg::new("chunk-size")
                     .help("size of chunks to send")
                     .long("chunk-size")
-                    .short('s')
+                    .short('c')
                     .required(false)
                     .takes_value(true)
                     .forbid_empty_values(true)
-                    .default_value("1K"),
+                    .default_value(DEFAULT_CHUNK_SIZE),
             )
             .arg(
                 Arg::new("pgp-pub-key")
                     .help("pgp public key file")
-                    .long("public-key")
-                    .short('p')
+                    .long("pgp-public-key")
                     .required(true)
+                    .takes_value(true)
+                    .forbid_empty_values(true),
+            )
+            .arg(
+                Arg::new("s3-simulation")
+                    .help("don't actually send data to s3")
+                    .long("s3-simulation")
+                    .required(false)
+                    .takes_value(false),
+            )
+            .arg(
+                Arg::new("s3-access-key")
+                    .help("s3 access key")
+                    .long("s3-access-key")
+                    .required(false)
+                    .takes_value(true)
+                    .forbid_empty_values(true),
+            )
+            .arg(
+                Arg::new("s3-secret-key")
+                    .help("s3 secret key")
+                    .long("s3-secret-key")
+                    .required(false)
+                    .takes_value(true)
+                    .forbid_empty_values(true),
+            )
+            .arg(
+                Arg::new("s3-region")
+                    .help("s3 region")
+                    .long("s3-region")
+                    .required(false)
+                    .takes_value(true)
+                    .forbid_empty_values(true),
+            )
+            .arg(
+                Arg::new("s3-bucket")
+                    .help("s3 bucket")
+                    .long("s3-bucket")
+                    .required(false)
                     .takes_value(true)
                     .forbid_empty_values(true),
             )
     }
 
     pub fn new(args: &ArgMatches) -> Option<Push> {
-        let pgp = Self::pgp(args.value_of("pgp-pub-key").unwrap())?;
         let database = Rc::new(Self::database(Path::new(
             args.value_of("database").unwrap(),
         ))?);
-        let chunk_size = Byte::from_str(args.value_of("chunk-size").unwrap())
-            .unwrap_or_else(|_| Byte::from_str(DEFAULT_CHUNK_SIZE).unwrap())
-            .min(Byte::from_str(MAX_CHUNK_SIZE).unwrap());
 
         let configuration = ConfigurationRepository::new(database.clone());
-        configuration.set_chuck_size(chunk_size);
+
+        let chunk_size = Byte::from_str(args.value_of("chunk-size").unwrap())
+            .unwrap()
+            .min(Byte::from_str(MAX_CHUNK_SIZE).unwrap());
+
+        if args.occurrences_of("chunk-size") > 0 {
+            configuration.override_chuck_size(chunk_size);
+        } else {
+            configuration.set_chuck_size(chunk_size);
+        }
+
+        if let Some(value) = args.value_of("s3-access-key") {
+            configuration.set_s3_access_key(value);
+        }
+        if let Some(value) = args.value_of("s3-secret-key") {
+            configuration.set_s3_secret_key(value);
+        }
+        if let Some(value) = args.value_of("s3-region") {
+            configuration.set_s3_region(value);
+        }
+        if let Some(value) = args.value_of("s3-bucket") {
+            configuration.set_s3_bucket(value);
+        }
+
+        let s3_access_key = configuration.get_s3_access_key();
+        let s3_secret_key = configuration.get_s3_secret_key();
+        let s3_region = configuration.get_s3_region();
+        let s3_bucket = configuration.get_s3_bucket();
 
         Some(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
             files_repository: FilesRepository::new(database.clone()),
             parts_repository: PartsRepository::new(database),
             configuration,
-            pgp,
+            pgp: Self::pgp(args.value_of("pgp-pub-key").unwrap())?,
+            s3: Self::s3(
+                args.is_present("s3-simulation"),
+                s3_region.as_deref(),
+                s3_bucket.as_deref(),
+                s3_access_key.as_deref(),
+                s3_secret_key.as_deref(),
+            )?,
         })
     }
 
@@ -105,13 +175,39 @@ impl Push {
     }
 
     fn pgp(pgp_pub_key_file: &str) -> Option<Pgp> {
-        match Pgp::new(pgp_pub_key_file, true) {
+        match Pgp::new(pgp_pub_key_file, false) {
             Ok(pgp) => Some(pgp),
             Err(e) => {
                 eprintln!(
                     "Error configuring pgp with public key file {}: {}",
                     pgp_pub_key_file, e
                 );
+                None
+            }
+        }
+    }
+
+    fn s3(
+        simulation: bool,
+        region: Option<&str>,
+        bucket: Option<&str>,
+        key: Option<&str>,
+        secret: Option<&str>,
+    ) -> Option<Box<dyn CloudStore>> {
+        if simulation {
+            return Some(Box::from(S3Simulation::new().unwrap()));
+        }
+        let (region, bucket) = match (region, bucket) {
+            (Some(region), Some(bucket)) => (region, bucket),
+            _ => {
+                eprintln!("Error configuring S3: region and bucket are mandatory");
+                return None;
+            }
+        };
+        match S3::new(region, bucket, key, secret) {
+            Ok(s3) => Some(Box::from(s3)),
+            Err(e) => {
+                eprintln!("Error configuring S3: {}", e);
                 None
             }
         }
@@ -128,7 +224,7 @@ impl Push {
         }
 
         println!("Reprocessing failed files from database");
-        match self.files_repository.list_by_parts_count(0) {
+        match self.files_repository.list_by_status("PENDING") {
             Err(e) => self.print_err(&self.folder, e),
             Ok(files) => {
                 for file in files {
@@ -202,13 +298,15 @@ impl Push {
         }
     }
 
+    // todo refactor
     fn process_file(&self, file: File) {
-        let chunk_size = self.configuration.get_chunk_size().get_bytes() as usize;
-        println!(" * {}: chunk size is {} byes", file.path, chunk_size);
+        println!(" * {}:", file.path);
 
         let path = PathBuf::from(&self.folder).join(PathBuf::from(&file.path));
         let mut reader = BufReader::new(fs::File::open(path.as_path()).unwrap());
 
+        let chunk_size = self.configuration.get_chunk_size().get_bytes() as usize;
+        let mut had_errors = false;
         let mut chunk: u64 = 0;
         loop {
             let mut writer = Vec::with_capacity(chunk_size);
@@ -217,6 +315,7 @@ impl Push {
             match self.pgp.encrypt(&mut reader, &mut writer) {
                 Err(e) => {
                     eprintln!("Unable to encrypt chunk {} of {}: {}", chunk, file.path, e);
+                    had_errors = true;
                     break;
                 }
                 Ok(size) => {
@@ -236,9 +335,20 @@ impl Push {
                                     "Unable to persist chunk {} of {}: {}",
                                     chunk, file.path, e
                                 );
+                                had_errors = true;
                                 break;
                             }
-                            Ok(_part) => {
+                            Ok(part) => {
+                                if let Err(e) = self.s3.put(part.uuid, writer.as_slice()) {
+                                    eprintln!(
+                                        "Unable to upload chunk {} of {}: {}",
+                                        chunk, file.path, e
+                                    );
+                                    had_errors = true;
+                                    break;
+                                } else {
+                                    self.parts_repository.mark_done(part.uuid);
+                                }
                                 if (size as usize) < chunk_size {
                                     break;
                                 } else {
@@ -249,6 +359,9 @@ impl Push {
                     }
                 }
             }
+        }
+        if !had_errors {
+            self.files_repository.mark_done(file.uuid);
         }
     }
 }

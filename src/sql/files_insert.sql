@@ -1,2 +1,2 @@
-insert into files (uuid, path, sha256, size)
-values (:uuid, :path, :sha256, :size)
+insert into files (uuid, path, sha256, size, status)
+values (:uuid, :path, :sha256, :size, 'PENDING')

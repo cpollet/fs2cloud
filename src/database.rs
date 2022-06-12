@@ -7,7 +7,7 @@ mod embedded {
     embed_migrations!("src/sql/migrations");
 }
 
-pub(crate) fn open(path: &Path) -> Result<Connection, Error> {
+pub fn open(path: &Path) -> Result<Connection, Error> {
     let mut db = Connection::open(path).map_err(Error::from)?;
 
     match embedded::migrations::runner().run(&mut db) {
