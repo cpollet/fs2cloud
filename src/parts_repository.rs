@@ -54,10 +54,11 @@ impl PartsRepository {
             .map(|_| part)
     }
 
-    pub fn mark_done(&self, uuid: Uuid) {
+    pub fn mark_done(&self, uuid: Uuid) -> Result<(), Error> {
         self.db.execute(
             include_str!("sql/parts_mark_done.sql"),
             &[(":uuid", &uuid.to_string())],
         );
+        Ok(()) // fixme
     }
 }

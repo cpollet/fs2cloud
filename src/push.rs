@@ -223,12 +223,16 @@ impl Push {
             Ok(dir) => self.visit_dir(&self.folder, dir),
         }
 
-        println!("Reprocessing failed files from database");
+        println!("Reprocessing pending files from database");
         match self.files_repository.list_by_status("PENDING") {
             Err(e) => self.print_err(&self.folder, e),
             Ok(files) => {
                 for file in files {
-                    self.process_file(file)
+                    if let Err(e) = self.process_file(&file) {
+                        self.print_err(Path::new(&file.path), e)
+                    } else {
+                        println!("  file {} done", &file.path);
+                    }
                 }
             }
         };
@@ -252,17 +256,16 @@ impl Push {
 
         match fs::metadata(&path).map_err(Error::from) {
             Err(e) => self.print_err(&path, e),
-            Ok(metadata) => {
-                if metadata.is_file() {
-                    self.visit_file(entry, metadata);
-                } else if metadata.is_dir() {
-                    match path.read_dir().map_err(Error::from) {
-                        Err(e) => self.print_err(&path, e),
-                        Ok(dir) => self.visit_dir(&path, dir),
-                    }
-                } else if metadata.is_symlink() {
-                    println!("Not following symlink {}", path.display());
-                }
+            Ok(metadata) if metadata.is_file() => self.visit_file(entry, metadata),
+            Ok(metadata) if metadata.is_dir() => match path.read_dir().map_err(Error::from) {
+                Err(e) => self.print_err(&path, e),
+                Ok(dir) => self.visit_dir(&path, dir),
+            },
+            Ok(metadata) if metadata.is_symlink() => {
+                println!("Not following symlink {}", path.display());
+            }
+            Ok(_) => {
+                println!("Type of {} unknown, skipping", path.display())
             }
         }
     }
@@ -290,102 +293,114 @@ impl Push {
                 );
                 print!("    sha256    ");
                 io::stdout().flush().unwrap();
-                match sha256::digest_file(file.path())
+                if let Err(e) = sha256::digest_file(file.path())
                     .map_err(Error::from)
-                    .and_then(|sum| {
-                        println!("{}", sum);
+                    .and_then(|sha256| {
+                        println!("{}", sha256);
                         self.files_repository.insert(File {
                             uuid,
                             path: local_path.display().to_string(),
                             size: metadata.len(),
-                            sha256: sum,
+                            sha256,
                         })
-                    }) {
-                    Err(e) => self.print_err(&file.path(), e),
-                    Ok(f) => self.process_file(f),
+                    })
+                    .and_then(|f| self.process_file(&f))
+                {
+                    self.print_err(&file.path(), e)
+                } else {
+                    println!("  file {} done", &file.path().display());
                 }
             }
         }
     }
 
-    // todo refactor
-    fn process_file(&self, file: File) {
+    fn process_file(&self, file: &File) -> Result<(), Error> {
         let path = PathBuf::from(&self.folder).join(PathBuf::from(&file.path));
-        let mut reader = BufReader::new(fs::File::open(path.as_path()).unwrap());
+        let reader = BufReader::new(fs::File::open(path.as_path()).unwrap());
 
-        let chunk_size = self.configuration.get_chunk_size().get_bytes() as usize;
-        let mut had_errors = false;
-        let mut chunk: u64 = 0;
+        match self.process_chunks(file.uuid, reader) {
+            Ok(_) => self.files_repository.mark_done(file.uuid),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn process_chunks(
+        &self,
+        file_uuid: Uuid,
+        mut reader: BufReader<fs::File>,
+    ) -> Result<(), Error> {
+        let mut chunk_idx: u64 = 0;
         loop {
-            println!("    chunk {}", chunk);
-            print!("      size    ");
-            io::stdout().flush().unwrap();
-            let mut writer = Vec::with_capacity(chunk_size);
-            let mut reader = ChunkBufReader::new(&mut reader, chunk_size);
-
-            match self.pgp.encrypt(&mut reader, &mut writer) {
-                Err(e) => {
-                    eprintln!("Unable to encrypt chunk {} of {}: {}", chunk, file.path, e);
-                    had_errors = true;
-                    break;
-                }
-                Ok(size) => {
-                    if size == 0 {
-                        break;
-                    } else {
-                        println!(
-                            "{} -> {}",
-                            Byte::from_bytes(size as u128).get_appropriate_unit(false),
-                            Byte::from_bytes(writer.len() as u128).get_appropriate_unit(false),
-                        );
-                        let uuid = Uuid::new_v4();
-                        println!("      uuid    {}", uuid);
-                        print!("      sha256  ");
-                        io::stdout().flush().unwrap();
-                        let sum = sha256::digest_bytes(writer.as_slice());
-                        println!("{}", sum);
-                        match self.parts_repository.insert(Part {
-                            uuid,
-                            file_uuid: file.uuid,
-                            idx: chunk,
-                            sha256: sum,
-                            size: writer.len(),
-                            payload_size: size as usize,
-                        }) {
-                            Err(e) => {
-                                eprintln!(
-                                    "Unable to persist chunk {} of {}: {}",
-                                    chunk, file.path, e
-                                );
-                                had_errors = true;
-                                break;
-                            }
-                            Ok(part) => {
-                                if let Err(e) = self.s3.put(part.uuid, writer.as_slice()) {
-                                    eprintln!(
-                                        "Unable to upload chunk {} of {}: {}",
-                                        chunk, file.path, e
-                                    );
-                                    had_errors = true;
-                                    break;
-                                } else {
-                                    self.parts_repository.mark_done(part.uuid);
-                                    println!("    chunk {} done", chunk);
-                                }
-                                if (size as usize) < chunk_size {
-                                    break;
-                                } else {
-                                    chunk += 1
-                                }
-                            }
-                        }
-                    }
-                }
+            match self.process_chunk(file_uuid, &mut reader, chunk_idx) {
+                Ok(true) => chunk_idx += 1,
+                Ok(false) => return Ok(()),
+                Err(e) => return Err(e),
             }
         }
-        if !had_errors {
-            self.files_repository.mark_done(file.uuid);
-            println!("  file {} done", file.path);
+    }
+
+    /// Processes a chunk, returning a `Result<bool, Error>` telling whether there is a next chunk
+    /// one or not.
+    fn process_chunk(
+        &self,
+        file_uuid: Uuid,
+        reader: &mut BufReader<fs::File>,
+        idx: u64,
+    ) -> Result<bool, Error> {
+        println!("    chunk {}", idx);
+        let uuid = Uuid::new_v4();
+        println!("      uuid    {}", uuid);
+        print!("      size    ");
+        io::stdout().flush().unwrap();
+
+        let chunk_size = self.configuration.get_chunk_size().get_bytes() as usize;
+        let mut writer = Vec::with_capacity(chunk_size);
+        let mut reader = ChunkBufReader::new(reader, chunk_size);
+
+        match self.pgp.encrypt(&mut reader, &mut writer) {
+            Err(e) => Err(Error::new(
+                format!("Unable to encrypt chunk {}: {}", idx, e).as_str(),
+            )),
+            Ok(0) => {
+                println!("0 -> 0 (discarded)");
+                Ok(false) // we read 0 bytes => nothing left to read
+            }
+            Ok(payload_size) => {
+                let size = writer.len();
+                println!(
+                    "{} -> {}",
+                    Byte::from_bytes(payload_size as u128).get_appropriate_unit(false),
+                    Byte::from_bytes(size as u128).get_appropriate_unit(false),
+                );
+
+                print!("      sha256  ");
+                io::stdout().flush().unwrap();
+                let sha256 = sha256::digest_bytes(writer.as_slice());
+                println!("{}", sha256);
+
+                let chunk = self
+                    .parts_repository
+                    .insert(Part {
+                        uuid,
+                        file_uuid,
+                        idx,
+                        sha256,
+                        size,
+                        payload_size,
+                    })
+                    .map_err(|e| {
+                        Error::new(format!("Unable to persist chunk {}: {}", idx, e).as_str())
+                    })?;
+
+                self.s3.put(chunk.uuid, writer.as_slice()).map_err(|e| {
+                    Error::new(format!("Unable to upload chunk {}: {}", idx, e).as_str())
+                })?;
+
+                self.parts_repository.mark_done(chunk.uuid)?;
+
+                // keep going of we reed as many bytes as possible
+                Ok(payload_size == chunk_size)
+            }
         }
     }
 }

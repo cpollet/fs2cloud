@@ -72,10 +72,11 @@ impl FilesRepository {
             .map_err(Error::from)
     }
 
-    pub fn mark_done(&self, uuid: Uuid) {
+    pub fn mark_done(&self, uuid: Uuid) -> Result<(), Error> {
         self.db.execute(
             include_str!("sql/files_mark_done.sql"),
             &[(":uuid", &uuid.to_string())],
         );
+        Ok(()) // fixme
     }
 }
