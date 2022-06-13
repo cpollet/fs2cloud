@@ -3,12 +3,12 @@ use crate::pull::Pull;
 use crate::push::Push;
 
 mod chunk_buf_reader;
+mod chunks_repository;
 mod configuration_repository;
 mod database;
 mod error;
 mod files_repository;
 mod opts;
-mod parts_repository;
 mod pgp;
 mod pull;
 mod push;

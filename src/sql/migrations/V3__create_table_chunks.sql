@@ -1,4 +1,4 @@
-create table parts
+create table chunks
 (
     uuid         varchar primary key,
     file_uuid    varchar,

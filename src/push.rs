@@ -12,16 +12,16 @@ use clap::{Arg, ArgMatches, Command};
 use rusqlite::Connection;
 use uuid::Uuid;
 
+use crate::chunks_repository::{Chunk, ChunksRepository};
 use crate::error::Error;
 use crate::files_repository::{File, FilesRepository};
-use crate::parts_repository::{Part, PartsRepository};
 use crate::pgp::Pgp;
 use crate::s3::{CloudStore, S3Simulation, S3};
 
 pub struct Push {
     folder: PathBuf,
     files_repository: FilesRepository,
-    parts_repository: PartsRepository,
+    chunks_repository: ChunksRepository,
     configuration: ConfigurationRepository,
     pgp: Pgp,
     s3: Box<dyn CloudStore>,
@@ -151,7 +151,7 @@ impl Push {
         Some(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
             files_repository: FilesRepository::new(database.clone()),
-            parts_repository: PartsRepository::new(database),
+            chunks_repository: ChunksRepository::new(database),
             configuration,
             pgp: Self::pgp(args.value_of("pgp-pub-key").unwrap())?,
             s3: Self::s3(
@@ -379,8 +379,8 @@ impl Push {
                 println!("{}", sha256);
 
                 let chunk = self
-                    .parts_repository
-                    .insert(Part {
+                    .chunks_repository
+                    .insert(Chunk {
                         uuid,
                         file_uuid,
                         idx,
@@ -396,7 +396,7 @@ impl Push {
                     Error::new(format!("Unable to upload chunk {}: {}", idx, e).as_str())
                 })?;
 
-                self.parts_repository.mark_done(chunk.uuid)?;
+                self.chunks_repository.mark_done(chunk.uuid)?;
 
                 // keep going of we reed as many bytes as possible
                 Ok(payload_size == chunk_size)

@@ -1,1 +1,0 @@
-update parts set status='DONE' where uuid=:uuid
