@@ -1,9 +1,9 @@
 use byte_unit::Byte;
-use std::fs;
 use std::fs::{DirEntry, Metadata, ReadDir};
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::{fs, io};
 
 use crate::chunk_buf_reader::ChunkBufReader;
 use crate::configuration_repository::ConfigurationRepository;
@@ -279,13 +279,23 @@ impl Push {
         let db_file = self.files_repository.find_by_path(local_path.as_path());
         match db_file {
             Err(e) => self.print_err(&file.path(), e),
-            Ok(Some(_)) => println!(" * {}: skip", local_path.display()),
+            Ok(Some(_)) => println!("  {}: skip metadata", local_path.display()),
             Ok(None) => {
+                println!("  {}", local_path.display());
+                let uuid = Uuid::new_v4();
+                println!("    uuid      {}", uuid);
+                println!(
+                    "    size      {}",
+                    Byte::from_bytes(metadata.len() as u128).get_appropriate_unit(false)
+                );
+                print!("    sha256    ");
+                io::stdout().flush().unwrap();
                 match sha256::digest_file(file.path())
                     .map_err(Error::from)
                     .and_then(|sum| {
+                        println!("{}", sum);
                         self.files_repository.insert(File {
-                            uuid: Uuid::new_v4(),
+                            uuid,
                             path: local_path.display().to_string(),
                             size: metadata.len(),
                             sha256: sum,
@@ -300,8 +310,6 @@ impl Push {
 
     // todo refactor
     fn process_file(&self, file: File) {
-        println!(" * {}:", file.path);
-
         let path = PathBuf::from(&self.folder).join(PathBuf::from(&file.path));
         let mut reader = BufReader::new(fs::File::open(path.as_path()).unwrap());
 
@@ -309,6 +317,9 @@ impl Push {
         let mut had_errors = false;
         let mut chunk: u64 = 0;
         loop {
+            println!("    chunk {}", chunk);
+            print!("      size    ");
+            io::stdout().flush().unwrap();
             let mut writer = Vec::with_capacity(chunk_size);
             let mut reader = ChunkBufReader::new(&mut reader, chunk_size);
 
@@ -322,11 +333,22 @@ impl Push {
                     if size == 0 {
                         break;
                     } else {
+                        println!(
+                            "{} -> {}",
+                            Byte::from_bytes(size as u128).get_appropriate_unit(false),
+                            Byte::from_bytes(writer.len() as u128).get_appropriate_unit(false),
+                        );
+                        let uuid = Uuid::new_v4();
+                        println!("      uuid    {}", uuid);
+                        print!("      sha256  ");
+                        io::stdout().flush().unwrap();
+                        let sum = sha256::digest_bytes(writer.as_slice());
+                        println!("{}", sum);
                         match self.parts_repository.insert(Part {
-                            uuid: Uuid::new_v4(),
+                            uuid,
                             file_uuid: file.uuid,
                             idx: chunk,
-                            sha256: sha256::digest_bytes(writer.as_slice()),
+                            sha256: sum,
                             size: writer.len(),
                             payload_size: size as usize,
                         }) {
@@ -348,6 +370,7 @@ impl Push {
                                     break;
                                 } else {
                                     self.parts_repository.mark_done(part.uuid);
+                                    println!("    chunk {} done", chunk);
                                 }
                                 if (size as usize) < chunk_size {
                                     break;
@@ -362,6 +385,7 @@ impl Push {
         }
         if !had_errors {
             self.files_repository.mark_done(file.uuid);
+            println!("  file {} done", file.path);
         }
     }
 }
