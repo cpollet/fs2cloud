@@ -9,7 +9,12 @@ impl<'t, R: Read> ChunkBufReader<'t, R> {
     pub fn new(reader: &'t mut BufReader<R>, bytes_left: usize) -> ChunkBufReader<R> {
         ChunkBufReader { reader, bytes_left }
     }
+
+    pub fn read_full_chunk(&self) -> bool {
+        self.bytes_left == 0
+    }
 }
+
 impl<R: Read> Read for ChunkBufReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let bytes_to_read = buf.len().min(self.bytes_left);

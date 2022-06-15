@@ -254,8 +254,10 @@ impl Push {
 
     fn process_chunks(&self, file: &File, mut reader: BufReader<fs::File>) -> Result<(), Error> {
         let mut chunk_idx: u64 = 0;
+        let mut writer = Vec::with_capacity(self.chunk_size.get_bytes() as usize);
         loop {
-            match self.process_chunk(file, &mut reader, chunk_idx) {
+            writer.clear();
+            match self.process_chunk(file, &mut reader, &mut writer, chunk_idx) {
                 Ok(true) => chunk_idx += 1,
                 Ok(false) => return Ok(()),
                 Err(e) => return Err(e),
@@ -269,6 +271,7 @@ impl Push {
         &self,
         file: &File,
         reader: &mut BufReader<fs::File>,
+        writer: &mut Vec<u8>,
         idx: u64,
     ) -> Result<bool, Error> {
         println!("    chunk {}", idx);
@@ -277,14 +280,11 @@ impl Push {
         print!("      size    ");
         io::stdout().flush().unwrap();
 
-        let chunk_size = self.chunk_size.get_bytes() as usize;
-        let mut writer = Vec::with_capacity(chunk_size);
-        let mut reader = ChunkBufReader::new(reader, chunk_size);
+        let mut reader = ChunkBufReader::new(reader, self.chunk_size.get_bytes() as usize);
 
-        // todo remove writer, get a Vec back
-        match self.pgp.encrypt(&mut reader, &mut writer) {
+        match self.pgp.encrypt(&mut reader, writer) {
             Err(e) => Err(Error::new(
-                format!("Unable to encrypt chunk {}: {}", idx, e).as_str(),
+                format!("Unable to process chunk {}: {}", idx, e).as_str(),
             )),
             Ok(0) => {
                 println!("0 -> 0 (discarded)");
@@ -316,8 +316,8 @@ impl Push {
 
                 self.chunks_repository.mark_done(chunk.uuid)?;
 
-                // keep going of we reed as many bytes as possible
-                Ok(payload_size == chunk_size)
+                // keep going if we were able to read a full chunk
+                Ok(reader.read_full_chunk())
             }
         }
     }
