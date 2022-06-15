@@ -63,21 +63,10 @@ impl Push {
             )
     }
 
-    pub fn new(args: &ArgMatches) -> Option<Push> {
-        let configs = match fs::read_to_string(Path::new(args.value_of("config").unwrap()))
+    pub fn new(args: &ArgMatches) -> Result<Push, Error> {
+        let configs = fs::read_to_string(Path::new(args.value_of("config").unwrap()))
             .map_err(Error::from)
-            .and_then(|yaml| YamlLoader::load_from_str(&yaml).map_err(Error::from))
-        {
-            Ok(configs) => configs,
-            Err(e) => {
-                eprintln!(
-                    "Unable to parse {}: {}",
-                    args.value_of("config").unwrap(),
-                    e
-                );
-                return None;
-            }
-        };
+            .and_then(|yaml| YamlLoader::load_from_str(&yaml).map_err(Error::from))?;
         let config = &configs[0];
 
         let database = Rc::new(Self::database(&config["database"])?);
@@ -95,7 +84,7 @@ impl Push {
         let s3_region = config["storage"]["s3"]["region"].as_str();
         let s3_bucket = config["storage"]["s3"]["bucket"].as_str();
 
-        Some(Push {
+        Ok(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
             files_repository: FilesRepository::new(database.clone()),
             chunks_repository: ChunksRepository::new(database),
@@ -111,31 +100,24 @@ impl Push {
         })
     }
 
-    fn database(config: &Yaml) -> Option<Connection> {
+    fn database(config: &Yaml) -> Result<Connection, Error> {
         let path = Path::new(config.as_str().unwrap());
-        match open(path) {
-            Ok(connection) => Some(connection),
-            Err(e) => {
-                eprintln!("Error opening database {}: {}", path.display(), e);
-                None
-            }
-        }
+        open(path)
+            .map_err(|e| Error::new(&format!("Error opening database {}: {}", path.display(), e)))
     }
 
-    fn pgp(config: &Yaml) -> Option<Pgp> {
-        let pub_key_file = config["public_key"].as_str()?;
+    fn pgp(config: &Yaml) -> Result<Pgp, Error> {
+        let pub_key_file = config["public_key"]
+            .as_str()
+            .ok_or(Error::new("Configuration key pgp.public_key is mandatory"))?;
         let ascii_armor = config["ascii"].as_bool().unwrap_or(false);
 
-        match Pgp::new(pub_key_file, ascii_armor) {
-            Ok(pgp) => Some(pgp),
-            Err(e) => {
-                eprintln!(
-                    "Error configuring pgp with public key file {}: {}",
-                    pub_key_file, e
-                );
-                None
-            }
-        }
+        Pgp::new(pub_key_file, ascii_armor).map_err(|e| {
+            Error::new(&format!(
+                "Error configuring pgp with public key file {}: {}",
+                pub_key_file, e
+            ))
+        })
     }
 
     fn s3(
@@ -144,22 +126,18 @@ impl Push {
         bucket: Option<&str>,
         key: Option<&str>,
         secret: Option<&str>,
-    ) -> Option<Box<dyn CloudStore>> {
+    ) -> Result<Box<dyn CloudStore>, Error> {
         if simulation {
-            return Some(Box::from(S3Simulation::new().unwrap()));
-        }
-        let (region, bucket) = match (region, bucket) {
-            (Some(region), Some(bucket)) => (region, bucket),
-            _ => {
-                eprintln!("Error configuring S3: region and bucket are mandatory");
-                return None;
-            }
-        };
-        match S3::new(region, bucket, key, secret) {
-            Ok(s3) => Some(Box::from(s3)),
-            Err(e) => {
-                eprintln!("Error configuring S3: {}", e);
-                None
+            Ok(Box::from(S3Simulation::new().unwrap()))
+        } else {
+            match (region, bucket) {
+                (Some(region), Some(bucket)) => match S3::new(region, bucket, key, secret) {
+                    Ok(s3) => Ok(Box::from(s3)),
+                    Err(e) => Err(Error::new(&format!("Error configuring S3: {}", e))),
+                },
+                _ => Err(Error::new(
+                    "Configuration keys storage.s3.region and storage.s3.bucket are mandatory",
+                )),
             }
         }
     }

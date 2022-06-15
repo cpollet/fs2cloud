@@ -16,11 +16,10 @@ mod s3;
 fn main() {
     if let Some(args) = parse() {
         match args.subcommand() {
-            Some((push::CMD, args)) => {
-                if let Some(push) = Push::new(args) {
-                    push.execute()
-                }
-            }
+            Some((push::CMD, args)) => match Push::new(args) {
+                Ok(push) => push.execute(),
+                Err(e) => eprintln!("{}", e),
+            },
             Some((pull::CMD, args)) => Pull::new(args).execute(),
             Some((cmd, _)) => eprintln!("Invalid command: {}", cmd),
             None => eprintln!("No command provided."),
