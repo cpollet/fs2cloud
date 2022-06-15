@@ -4,7 +4,6 @@ use crate::push::Push;
 
 mod chunk_buf_reader;
 mod chunks_repository;
-mod configuration_repository;
 mod database;
 mod error;
 mod files_repository;

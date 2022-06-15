@@ -19,3 +19,4 @@ rusqlite = { version = "0.26.3", features = ["bundled"] }
 sequoia-openpgp = "1.9.0"
 sha256 = "1.0.3"
 uuid = { version = "1.1.1", features = ["v4", "fast-rng"] }
+yaml-rust = "0.4.5"

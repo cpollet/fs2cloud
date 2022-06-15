@@ -6,11 +6,11 @@ use std::rc::Rc;
 use std::{fs, io};
 
 use crate::chunk_buf_reader::ChunkBufReader;
-use crate::configuration_repository::ConfigurationRepository;
 use crate::database::open;
 use clap::{Arg, ArgMatches, Command};
 use rusqlite::Connection;
 use uuid::Uuid;
+use yaml_rust::{Yaml, YamlLoader};
 
 use crate::chunks_repository::ChunksRepository;
 use crate::error::Error;
@@ -22,7 +22,7 @@ pub struct Push {
     folder: PathBuf,
     files_repository: FilesRepository,
     chunks_repository: ChunksRepository,
-    configuration: ConfigurationRepository,
+    chunk_size: Byte,
     pgp: Pgp,
     s3: Box<dyn CloudStore>,
 }
@@ -46,28 +46,10 @@ impl Push {
                     .forbid_empty_values(true),
             )
             .arg(
-                Arg::new("database")
-                    .help("database to use")
-                    .long("database")
-                    .short('d')
-                    .required(true)
-                    .takes_value(true)
-                    .forbid_empty_values(true),
-            )
-            .arg(
-                Arg::new("chunk-size")
-                    .help("size of chunks to send")
-                    .long("chunk-size")
+                Arg::new("config")
+                    .help("configuration file")
+                    .long("config")
                     .short('c')
-                    .required(false)
-                    .takes_value(true)
-                    .forbid_empty_values(true)
-                    .default_value(DEFAULT_CHUNK_SIZE),
-            )
-            .arg(
-                Arg::new("pgp-pub-key")
-                    .help("pgp public key file")
-                    .long("pgp-public-key")
                     .required(true)
                     .takes_value(true)
                     .forbid_empty_values(true),
@@ -79,81 +61,46 @@ impl Push {
                     .required(false)
                     .takes_value(false),
             )
-            .arg(
-                Arg::new("s3-access-key")
-                    .help("s3 access key")
-                    .long("s3-access-key")
-                    .required(false)
-                    .takes_value(true)
-                    .forbid_empty_values(true),
-            )
-            .arg(
-                Arg::new("s3-secret-key")
-                    .help("s3 secret key")
-                    .long("s3-secret-key")
-                    .required(false)
-                    .takes_value(true)
-                    .forbid_empty_values(true),
-            )
-            .arg(
-                Arg::new("s3-region")
-                    .help("s3 region")
-                    .long("s3-region")
-                    .required(false)
-                    .takes_value(true)
-                    .forbid_empty_values(true),
-            )
-            .arg(
-                Arg::new("s3-bucket")
-                    .help("s3 bucket")
-                    .long("s3-bucket")
-                    .required(false)
-                    .takes_value(true)
-                    .forbid_empty_values(true),
-            )
     }
 
     pub fn new(args: &ArgMatches) -> Option<Push> {
-        let database = Rc::new(Self::database(Path::new(
-            args.value_of("database").unwrap(),
-        ))?);
+        let configs = match fs::read_to_string(Path::new(args.value_of("config").unwrap()))
+            .map_err(Error::from)
+            .and_then(|yaml| YamlLoader::load_from_str(&yaml).map_err(Error::from))
+        {
+            Ok(configs) => configs,
+            Err(e) => {
+                eprintln!(
+                    "Unable to parse {}: {}",
+                    args.value_of("config").unwrap(),
+                    e
+                );
+                return None;
+            }
+        };
+        let config = &configs[0];
 
-        let configuration = ConfigurationRepository::new(database.clone());
+        let database = Rc::new(Self::database(&config["database"])?);
 
-        let chunk_size = Byte::from_str(args.value_of("chunk-size").unwrap())
-            .unwrap()
-            .min(Byte::from_str(MAX_CHUNK_SIZE).unwrap());
+        let chunk_size = Byte::from_str(
+            config["chunks"]["size"]
+                .as_str()
+                .unwrap_or(DEFAULT_CHUNK_SIZE),
+        )
+        .unwrap()
+        .min(Byte::from_str(MAX_CHUNK_SIZE).unwrap());
 
-        if args.occurrences_of("chunk-size") > 0 {
-            configuration.override_chuck_size(chunk_size);
-        } else {
-            configuration.set_chuck_size(chunk_size);
-        }
-
-        if let Some(value) = args.value_of("s3-access-key") {
-            configuration.set_s3_access_key(value);
-        }
-        if let Some(value) = args.value_of("s3-secret-key") {
-            configuration.set_s3_secret_key(value);
-        }
-        if let Some(value) = args.value_of("s3-region") {
-            configuration.set_s3_region(value);
-        }
-        if let Some(value) = args.value_of("s3-bucket") {
-            configuration.set_s3_bucket(value);
-        }
-
-        let s3_access_key = configuration.get_s3_access_key();
-        let s3_secret_key = configuration.get_s3_secret_key();
-        let s3_region = configuration.get_s3_region();
-        let s3_bucket = configuration.get_s3_bucket();
+        let s3_access_key = config["storage"]["s3"]["access_key"].as_str();
+        let s3_secret_key = config["storage"]["s3"]["secret_key"].as_str();
+        let s3_region = config["storage"]["s3"]["region"].as_str();
+        let s3_bucket = config["storage"]["s3"]["bucket"].as_str();
 
         Some(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
             files_repository: FilesRepository::new(database.clone()),
             chunks_repository: ChunksRepository::new(database),
-            configuration,
-            pgp: Self::pgp(args.value_of("pgp-pub-key").unwrap())?,
+            chunk_size,
+            pgp: Self::pgp(&config["pgp"])?,
             s3: Self::s3(
                 args.is_present("s3-simulation"),
                 s3_region.as_deref(),
@@ -164,7 +111,8 @@ impl Push {
         })
     }
 
-    fn database(path: &Path) -> Option<Connection> {
+    fn database(config: &Yaml) -> Option<Connection> {
+        let path = Path::new(config.as_str().unwrap());
         match open(path) {
             Ok(connection) => Some(connection),
             Err(e) => {
@@ -174,13 +122,16 @@ impl Push {
         }
     }
 
-    fn pgp(pgp_pub_key_file: &str) -> Option<Pgp> {
-        match Pgp::new(pgp_pub_key_file, false) {
+    fn pgp(config: &Yaml) -> Option<Pgp> {
+        let pub_key_file = config["public_key"].as_str()?;
+        let ascii_armor = config["ascii"].as_bool().unwrap_or(false);
+
+        match Pgp::new(pub_key_file, ascii_armor) {
             Ok(pgp) => Some(pgp),
             Err(e) => {
                 eprintln!(
                     "Error configuring pgp with public key file {}: {}",
-                    pgp_pub_key_file, e
+                    pub_key_file, e
                 );
                 None
             }
@@ -348,10 +299,11 @@ impl Push {
         print!("      size    ");
         io::stdout().flush().unwrap();
 
-        let chunk_size = self.configuration.get_chunk_size().get_bytes() as usize;
+        let chunk_size = self.chunk_size.get_bytes() as usize;
         let mut writer = Vec::with_capacity(chunk_size);
         let mut reader = ChunkBufReader::new(reader, chunk_size);
 
+        // todo remove writer, get a Vec back
         match self.pgp.encrypt(&mut reader, &mut writer) {
             Err(e) => Err(Error::new(
                 format!("Unable to encrypt chunk {}: {}", idx, e).as_str(),

@@ -4,6 +4,7 @@ use std::fmt::{Display, Formatter};
 use std::io;
 use std::path::StripPrefixError;
 use std::str::Utf8Error;
+use yaml_rust::ScanError;
 
 pub struct Error {
     msg: String,
@@ -11,7 +12,7 @@ pub struct Error {
 
 impl Error {
     pub fn new(msg: &str) -> Error {
-        Error {
+        Self {
             msg: msg.to_string(),
         }
     }
@@ -27,48 +28,54 @@ impl Display for Error {
 
 impl From<io::Error> for Error {
     fn from(e: io::Error) -> Self {
-        Error { msg: e.to_string() }
+        Self { msg: e.to_string() }
     }
 }
 
 impl From<rusqlite::Error> for Error {
     fn from(e: rusqlite::Error) -> Self {
-        Error { msg: e.to_string() }
+        Self { msg: e.to_string() }
     }
 }
 
 impl From<refinery::Error> for Error {
     fn from(e: refinery::Error) -> Self {
-        Error { msg: e.to_string() }
+        Self { msg: e.to_string() }
     }
 }
 
 impl From<StripPrefixError> for Error {
     fn from(e: StripPrefixError) -> Self {
-        Error { msg: e.to_string() }
+        Self { msg: e.to_string() }
     }
 }
 
 impl From<anyhow::Error> for Error {
     fn from(e: anyhow::Error) -> Self {
-        Error { msg: e.to_string() }
+        Self { msg: e.to_string() }
     }
 }
 
 impl From<CredentialsError> for Error {
     fn from(e: CredentialsError) -> Self {
-        Error { msg: e.to_string() }
+        Self { msg: e.to_string() }
     }
 }
 
 impl From<Utf8Error> for Error {
     fn from(e: Utf8Error) -> Self {
-        Error { msg: e.to_string() }
+        Self { msg: e.to_string() }
     }
 }
 
 impl From<S3Error> for Error {
     fn from(e: S3Error) -> Self {
-        Error { msg: e.to_string() }
+        Self { msg: e.to_string() }
+    }
+}
+
+impl From<ScanError> for Error {
+    fn from(e: ScanError) -> Self {
+        Self { msg: e.to_string() }
     }
 }
