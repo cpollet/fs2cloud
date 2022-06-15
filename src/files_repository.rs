@@ -5,10 +5,11 @@ use std::path::Path;
 use std::rc::Rc;
 use uuid::Uuid;
 
+#[derive(Debug)]
 pub struct File {
     pub uuid: Uuid,
     pub path: String,
-    pub size: u64,
+    pub size: usize,
     pub sha256: String,
 }
 
@@ -33,7 +34,13 @@ impl FilesRepository {
         FilesRepository { db }
     }
 
-    pub fn insert(&self, file: File) -> Result<File, Error> {
+    pub fn insert(&self, path: String, sha256: String, size: usize) -> Result<File, Error> {
+        let file = File {
+            uuid: Uuid::new_v4(),
+            path,
+            sha256,
+            size,
+        };
         self.db
             .execute(
                 include_str!("sql/files_insert.sql"),

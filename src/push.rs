@@ -12,7 +12,7 @@ use clap::{Arg, ArgMatches, Command};
 use rusqlite::Connection;
 use uuid::Uuid;
 
-use crate::chunks_repository::{Chunk, ChunksRepository};
+use crate::chunks_repository::ChunksRepository;
 use crate::error::Error;
 use crate::files_repository::{File, FilesRepository};
 use crate::pgp::Pgp;
@@ -297,12 +297,11 @@ impl Push {
                     .map_err(Error::from)
                     .and_then(|sha256| {
                         println!("{}", sha256);
-                        self.files_repository.insert(File {
-                            uuid,
-                            path: local_path.display().to_string(),
-                            size: metadata.len(),
+                        self.files_repository.insert(
+                            local_path.display().to_string(),
                             sha256,
-                        })
+                            metadata.len() as usize,
+                        )
                     })
                     .and_then(|f| self.process_file(&f))
                 {
@@ -318,20 +317,16 @@ impl Push {
         let path = PathBuf::from(&self.folder).join(PathBuf::from(&file.path));
         let reader = BufReader::new(fs::File::open(path.as_path()).unwrap());
 
-        match self.process_chunks(file.uuid, reader) {
+        match self.process_chunks(file, reader) {
             Ok(_) => self.files_repository.mark_done(file.uuid),
             Err(e) => Err(e),
         }
     }
 
-    fn process_chunks(
-        &self,
-        file_uuid: Uuid,
-        mut reader: BufReader<fs::File>,
-    ) -> Result<(), Error> {
+    fn process_chunks(&self, file: &File, mut reader: BufReader<fs::File>) -> Result<(), Error> {
         let mut chunk_idx: u64 = 0;
         loop {
-            match self.process_chunk(file_uuid, &mut reader, chunk_idx) {
+            match self.process_chunk(file, &mut reader, chunk_idx) {
                 Ok(true) => chunk_idx += 1,
                 Ok(false) => return Ok(()),
                 Err(e) => return Err(e),
@@ -343,7 +338,7 @@ impl Push {
     /// one or not.
     fn process_chunk(
         &self,
-        file_uuid: Uuid,
+        file: &File,
         reader: &mut BufReader<fs::File>,
         idx: u64,
     ) -> Result<bool, Error> {
@@ -380,14 +375,7 @@ impl Push {
 
                 let chunk = self
                     .chunks_repository
-                    .insert(Chunk {
-                        uuid,
-                        file_uuid,
-                        idx,
-                        sha256,
-                        size,
-                        payload_size,
-                    })
+                    .insert(file, idx, sha256, size, payload_size)
                     .map_err(|e| {
                         Error::new(format!("Unable to persist chunk {}: {}", idx, e).as_str())
                     })?;

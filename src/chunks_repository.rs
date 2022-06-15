@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::files_repository::File;
 use rusqlite::{Connection, Row};
 use std::rc::Rc;
 use uuid::Uuid;
@@ -37,7 +38,22 @@ impl ChunksRepository {
         ChunksRepository { db }
     }
 
-    pub fn insert(&self, chunk: Chunk) -> Result<Chunk, Error> {
+    pub fn insert(
+        &self,
+        file: &File,
+        idx: u64,
+        sha256: String,
+        size: usize,
+        payload_size: usize,
+    ) -> Result<Chunk, Error> {
+        let chunk = Chunk {
+            uuid: Uuid::new_v4(),
+            file_uuid: file.uuid,
+            idx,
+            sha256,
+            size,
+            payload_size,
+        };
         self.db
             .execute(
                 include_str!("sql/chunks_insert.sql"),
