@@ -15,7 +15,7 @@ mod opts;
 mod pgp;
 mod pull;
 mod push;
-mod s3;
+mod store;
 
 fn main() {
     pretty_env_logger::init();

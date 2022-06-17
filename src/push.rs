@@ -18,7 +18,9 @@ use crate::error::Error;
 use crate::files_repository::{File, FilesRepository};
 use crate::fs_repository::FsRepository;
 use crate::pgp::Pgp;
-use crate::s3::{CloudStore, S3Simulation, S3};
+use crate::store::log::Log;
+use crate::store::s3::S3;
+use crate::store::CloudStore;
 
 pub struct Push {
     folder: PathBuf,
@@ -27,7 +29,7 @@ pub struct Push {
     fs_repository: FsRepository,
     chunk_size: Byte,
     pgp: Pgp,
-    s3: Box<dyn CloudStore>,
+    store: Box<dyn CloudStore>,
 }
 
 pub const CMD: &str = "push";
@@ -57,13 +59,6 @@ impl Push {
                     .takes_value(true)
                     .forbid_empty_values(true),
             )
-            .arg(
-                Arg::new("s3-simulation")
-                    .help("don't actually send data to s3")
-                    .long("s3-simulation")
-                    .required(false)
-                    .takes_value(false),
-            )
     }
 
     pub fn new(args: &ArgMatches) -> Result<Self, Error> {
@@ -82,11 +77,6 @@ impl Push {
         .unwrap()
         .min(Byte::from_str(MAX_CHUNK_SIZE).unwrap());
 
-        let s3_access_key = config["storage"]["s3"]["access_key"].as_str();
-        let s3_secret_key = config["storage"]["s3"]["secret_key"].as_str();
-        let s3_region = config["storage"]["s3"]["region"].as_str();
-        let s3_bucket = config["storage"]["s3"]["bucket"].as_str();
-
         Ok(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
             files_repository: FilesRepository::new(database.clone()),
@@ -94,13 +84,7 @@ impl Push {
             fs_repository: FsRepository::new(database),
             chunk_size,
             pgp: Self::pgp(&config["pgp"])?,
-            s3: Self::s3(
-                args.is_present("s3-simulation"),
-                s3_region.as_deref(),
-                s3_bucket.as_deref(),
-                s3_access_key.as_deref(),
-                s3_secret_key.as_deref(),
-            )?,
+            store: Self::store(&config["store"])?,
         })
     }
 
@@ -124,25 +108,29 @@ impl Push {
         })
     }
 
-    fn s3(
-        simulation: bool,
-        region: Option<&str>,
-        bucket: Option<&str>,
-        key: Option<&str>,
-        secret: Option<&str>,
-    ) -> Result<Box<dyn CloudStore>, Error> {
-        if simulation {
-            Ok(Box::from(S3Simulation::new().unwrap()))
-        } else {
-            match (region, bucket) {
-                (Some(region), Some(bucket)) => match S3::new(region, bucket, key, secret) {
-                    Ok(s3) => Ok(Box::from(s3)),
-                    Err(e) => Err(Error::new(&format!("Error configuring S3: {}", e))),
-                },
-                _ => Err(Error::new(
-                    "Configuration keys storage.s3.region and storage.s3.bucket are mandatory",
-                )),
-            }
+    fn store(config: &Yaml) -> Result<Box<dyn CloudStore>, Error> {
+        let store = config["type"].as_str().unwrap_or("log");
+        match store {
+            "log" => Ok(Box::new(Log::new())),
+            "s3" => Self::s3(&config["s3"]),
+            _ => Err(Error::new(&format!("Invalid store {}", store))),
+        }
+    }
+
+    fn s3(config: &Yaml) -> Result<Box<dyn CloudStore>, Error> {
+        let access_key = config["access_key"].as_str();
+        let secret_key = config["secret_key"].as_str();
+        let region = config["region"].as_str();
+        let bucket = config["bucket"].as_str();
+
+        match (region, bucket) {
+            (Some(region), Some(bucket)) => match S3::new(region, bucket, access_key, secret_key) {
+                Ok(s3) => Ok(Box::from(s3)),
+                Err(e) => Err(Error::new(&format!("Error configuring S3: {}", e))),
+            },
+            _ => Err(Error::new(
+                "Configuration keys store.s3.region and store.s3.bucket are mandatory",
+            )),
         }
     }
 
@@ -340,7 +328,7 @@ impl Push {
                         Error::new(format!("Unable to persist chunk {}: {}", idx, e).as_str())
                     })?;
 
-                self.s3.put(chunk.uuid, writer.as_slice()).map_err(|e| {
+                self.store.put(chunk.uuid, writer.as_slice()).map_err(|e| {
                     Error::new(format!("Unable to upload chunk {}: {}", idx, e).as_str())
                 })?;
 

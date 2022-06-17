@@ -1,11 +1,8 @@
 use crate::error::Error;
+use crate::store::CloudStore;
 use awscreds::Credentials;
 use s3::Bucket;
 use uuid::Uuid;
-
-pub trait CloudStore {
-    fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error>;
-}
 
 pub struct S3 {
     bucket: Bucket,
@@ -41,20 +38,5 @@ impl CloudStore for S3 {
             403 => Err(Error::new("S3: invalid credentials")),
             _ => Err(Error::new("S3: error")),
         }
-    }
-}
-
-pub struct S3Simulation {}
-
-impl S3Simulation {
-    pub fn new() -> Option<S3Simulation> {
-        Some(S3Simulation {})
-    }
-}
-
-impl CloudStore for S3Simulation {
-    fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
-        println!("PUT {} ({} bytes)", object_id, data.len());
-        Ok(())
     }
 }
