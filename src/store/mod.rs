@@ -1,6 +1,7 @@
 use crate::Error;
 use uuid::Uuid;
 
+pub mod local;
 pub mod log;
 pub mod s3;
 

@@ -40,6 +40,7 @@ impl ChunksRepository {
 
     pub fn insert(
         &self,
+        uuid: Uuid,
         file: &File,
         idx: u64,
         sha256: String,
@@ -47,7 +48,7 @@ impl ChunksRepository {
         payload_size: usize,
     ) -> Result<Chunk, Error> {
         let chunk = Chunk {
-            uuid: Uuid::new_v4(),
+            uuid,
             file_uuid: file.uuid,
             idx,
             sha256,

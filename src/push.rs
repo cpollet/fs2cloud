@@ -18,6 +18,7 @@ use crate::error::Error;
 use crate::files_repository::{File, FilesRepository};
 use crate::fs_repository::FsRepository;
 use crate::pgp::Pgp;
+use crate::store::local::Local;
 use crate::store::log::Log;
 use crate::store::s3::S3;
 use crate::store::CloudStore;
@@ -113,6 +114,11 @@ impl Push {
         match store {
             "log" => Ok(Box::new(Log::new())),
             "s3" => Self::s3(&config["s3"]),
+            "local" => Ok(Box::new(Local::new(
+                config["local"]["path"].as_str().ok_or(Error::new(
+                    "Configuration key store.local.path is mandatory",
+                ))?,
+            )?)),
             _ => Err(Error::new(&format!("Invalid store {}", store))),
         }
     }
@@ -323,7 +329,7 @@ impl Push {
 
                 let chunk = self
                     .chunks_repository
-                    .insert(file, idx, sha256, size, payload_size)
+                    .insert(uuid, file, idx, sha256, size, payload_size)
                     .map_err(|e| {
                         Error::new(format!("Unable to persist chunk {}: {}", idx, e).as_str())
                     })?;
