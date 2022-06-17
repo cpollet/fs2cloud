@@ -12,11 +12,16 @@ aws-creds = "0.29.1"
 byte-unit = "4.0.14"
 clap = { version = "3.1.18", features = ["cargo"] }
 clap_complete = "3.1.4"
+libc = "0.2.126"
+log = "0.4.17"
 fallible-iterator = "0.2.0"
+fuser = "0.11.0"
+pretty_env_logger = "0.4.0"
 refinery = { version = "0.8.4", features = ["rusqlite"] }
 rust-s3 = { version = "0.31.0", default-features = false, features = ["sync"] }
 rusqlite = { version = "0.26.3", features = ["bundled"] }
 sequoia-openpgp = "1.9.0"
 sha256 = "1.0.3"
+time = "0.3.9"
 uuid = { version = "1.1.1", features = ["v4", "fast-rng"] }
 yaml-rust = "0.4.5"

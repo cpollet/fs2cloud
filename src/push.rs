@@ -1,4 +1,5 @@
 use byte_unit::Byte;
+use std::ffi::OsStr;
 use std::fs::{DirEntry, Metadata, ReadDir};
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
@@ -6,7 +7,7 @@ use std::rc::Rc;
 use std::{fs, io};
 
 use crate::chunk_buf_reader::ChunkBufReader;
-use crate::database::open;
+use crate::database;
 use clap::{Arg, ArgMatches, Command};
 use rusqlite::Connection;
 use uuid::Uuid;
@@ -15,6 +16,7 @@ use yaml_rust::{Yaml, YamlLoader};
 use crate::chunks_repository::ChunksRepository;
 use crate::error::Error;
 use crate::files_repository::{File, FilesRepository};
+use crate::fs_repository::FsRepository;
 use crate::pgp::Pgp;
 use crate::s3::{CloudStore, S3Simulation, S3};
 
@@ -22,6 +24,7 @@ pub struct Push {
     folder: PathBuf,
     files_repository: FilesRepository,
     chunks_repository: ChunksRepository,
+    fs_repository: FsRepository,
     chunk_size: Byte,
     pgp: Pgp,
     s3: Box<dyn CloudStore>,
@@ -35,7 +38,7 @@ const DEFAULT_CHUNK_SIZE: &str = "90MB";
 impl Push {
     pub fn cli() -> Command<'static> {
         Command::new(CMD)
-            .about("copy local folder to cloud")
+            .about("Copy local folder to cloud")
             .arg(
                 Arg::new("folder")
                     .help("local folder path")
@@ -63,7 +66,7 @@ impl Push {
             )
     }
 
-    pub fn new(args: &ArgMatches) -> Result<Push, Error> {
+    pub fn new(args: &ArgMatches) -> Result<Self, Error> {
         let configs = fs::read_to_string(Path::new(args.value_of("config").unwrap()))
             .map_err(Error::from)
             .and_then(|yaml| YamlLoader::load_from_str(&yaml).map_err(Error::from))?;
@@ -87,7 +90,8 @@ impl Push {
         Ok(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
             files_repository: FilesRepository::new(database.clone()),
-            chunks_repository: ChunksRepository::new(database),
+            chunks_repository: ChunksRepository::new(database.clone()),
+            fs_repository: FsRepository::new(database),
             chunk_size,
             pgp: Self::pgp(&config["pgp"])?,
             s3: Self::s3(
@@ -102,7 +106,7 @@ impl Push {
 
     fn database(config: &Yaml) -> Result<Connection, Error> {
         let path = Path::new(config.as_str().unwrap());
-        open(path)
+        database::open(path)
             .map_err(|e| Error::new(&format!("Error opening database {}: {}", path.display(), e)))
     }
 
@@ -157,10 +161,11 @@ impl Push {
             Err(e) => self.print_err(&self.folder, e),
             Ok(files) => {
                 for file in files {
-                    if let Err(e) = self.process_file(&file) {
-                        self.print_err(Path::new(&file.path), e)
+                    let file_path = file.path.clone();
+                    if let Err(e) = self.process_file(file) {
+                        self.print_err(Path::new(&file_path), e)
                     } else {
-                        println!("  file {} done", &file.path);
+                        println!("  file {} done", file_path);
                     }
                 }
             }
@@ -232,7 +237,29 @@ impl Push {
                             metadata.len() as usize,
                         )
                     })
-                    .and_then(|f| self.process_file(&f))
+                    .and_then(|f| self.process_file(f))
+                    .and_then(|f| {
+                        let mut inode = self.fs_repository.get_root();
+                        let parent = local_path.parent().unwrap_or(Path::new(""));
+                        for component in parent.iter() {
+                            inode = match self
+                                .fs_repository
+                                .get_inode(&inode, &component.to_str().unwrap().to_string())
+                            {
+                                Ok(inode) => inode,
+                                Err(e) => return Err(e),
+                            };
+                        }
+                        self.fs_repository.insert_file(
+                            f.uuid,
+                            &local_path
+                                .file_name()
+                                .and_then(OsStr::to_str)
+                                .unwrap()
+                                .to_string(),
+                            &inode,
+                        )
+                    })
                 {
                     self.print_err(&file.path(), e)
                 } else {
@@ -242,12 +269,15 @@ impl Push {
         }
     }
 
-    fn process_file(&self, file: &File) -> Result<(), Error> {
+    fn process_file(&self, file: File) -> Result<File, Error> {
         let path = PathBuf::from(&self.folder).join(PathBuf::from(&file.path));
         let reader = BufReader::new(fs::File::open(path.as_path()).unwrap());
 
-        match self.process_chunks(file, reader) {
-            Ok(_) => self.files_repository.mark_done(file.uuid),
+        match self.process_chunks(&file, reader) {
+            Ok(_) => {
+                self.files_repository.mark_done(file.uuid)?;
+                Ok(file)
+            }
             Err(e) => Err(e),
         }
     }

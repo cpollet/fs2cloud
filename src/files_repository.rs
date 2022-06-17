@@ -66,6 +66,17 @@ impl FilesRepository {
             .map_err(Error::from)
     }
 
+    pub fn find_by_uuid(&self, uuid: Uuid) -> Result<Option<File>, Error> {
+        self.db
+            .query_row(
+                include_str!("sql/files_find_by_uuid.sql"),
+                &[(":uuid", &uuid.to_string())],
+                |row| Ok(row.into()),
+            )
+            .optional()
+            .map_err(Error::from)
+    }
+
     pub fn list_by_status(&self, status: &str) -> Result<Vec<File>, Error> {
         let mut stmt = self
             .db

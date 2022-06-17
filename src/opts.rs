@@ -1,4 +1,4 @@
-use crate::Push;
+use crate::{Fuse, Push};
 use clap::{command, Arg, ArgMatches, Command};
 use clap_complete::{generate, Generator, Shell};
 use std::io;
@@ -20,6 +20,7 @@ fn build_cli() -> Command<'static> {
                 ),
         )
         .subcommand(Push::cli())
+        .subcommand(Fuse::cli())
 }
 
 fn print_completions<G: Generator>(gen: G, cmd: &mut Command) {

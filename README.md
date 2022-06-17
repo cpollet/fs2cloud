@@ -12,3 +12,4 @@ The following package are required to build:
  * pkg-config
  * nettle-dev
  * libssl-dev
+ * libfuse-dev

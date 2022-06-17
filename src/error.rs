@@ -6,6 +6,7 @@ use std::path::StripPrefixError;
 use std::str::Utf8Error;
 use yaml_rust::ScanError;
 
+#[derive(Debug)]
 pub struct Error {
     msg: String,
 }

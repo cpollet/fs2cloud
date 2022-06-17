@@ -17,3 +17,11 @@ create table chunks
     payload_size number,  -- size of the encrypted payload
     status       varchar  -- upload status: PENDING, SUCCESS, ERROR
 );
+
+create table inodes
+(
+    id        integer primary key,
+    parent_id number,
+    file_uuid varchar,
+    name varchar
+)
