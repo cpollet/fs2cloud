@@ -96,12 +96,12 @@ impl Push {
     }
 
     fn pgp(config: &Yaml) -> Result<Pgp, Error> {
-        let pub_key_file = config["public_key"]
+        let pub_key_file = config["key"]
             .as_str()
-            .ok_or(Error::new("Configuration key pgp.public_key is mandatory"))?;
+            .ok_or(Error::new("Configuration key pgp.key is mandatory"))?;
         let ascii_armor = config["ascii"].as_bool().unwrap_or(false);
 
-        Pgp::new(pub_key_file, ascii_armor).map_err(|e| {
+        Pgp::new(pub_key_file, None, ascii_armor).map_err(|e| {
             Error::new(&format!(
                 "Error configuring pgp with public key file {}: {}",
                 pub_key_file, e

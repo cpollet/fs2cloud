@@ -4,7 +4,10 @@ chunks:
   size: 90MB
 
 pgp:
-  public_key: ...
+  # a public key to push, a keypair for pull/fuse
+  key: ...
+#  # for password-protected keypair
+#  passphrase: ...
 
 store:
 #   possible values:
