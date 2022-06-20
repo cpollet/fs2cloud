@@ -39,4 +39,8 @@ impl CloudStore for S3 {
             _ => Err(Error::new("S3: error")),
         }
     }
+
+    fn get(&self, _object_id: Uuid) -> Result<Vec<u8>, Error> {
+        todo!()
+    }
 }

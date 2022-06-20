@@ -136,7 +136,7 @@ impl FsRepository {
         parent_id: u64,
         name: &String,
     ) -> Result<Option<Inode>, Error> {
-        log::debug!("select where parent_id={} and name='{}'", parent_id, name);
+        log::trace!("select where parent_id={} and name='{}'", parent_id, name);
         self.db
             .query_row(
                 include_str!("sql/inode_find_by_parent_id_and_name.sql"),

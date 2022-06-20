@@ -15,4 +15,9 @@ impl CloudStore for Log {
         log::info!("WRITE {} ({} bytes)", object_id, data.len());
         Ok(())
     }
+
+    fn get(&self, object_id: Uuid) -> Result<Vec<u8>, Error> {
+        log::info!("READ {}", object_id);
+        Ok(vec![])
+    }
 }

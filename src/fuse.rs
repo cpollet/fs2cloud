@@ -1,7 +1,12 @@
+use crate::chunks_repository::ChunksRepository;
 use crate::database;
 use crate::error::Error;
 use crate::files_repository::FilesRepository;
 use crate::fs_repository::{FsRepository, Inode};
+use crate::pgp::Pgp;
+use crate::store::local::Local;
+use crate::store::log::Log;
+use crate::store::CloudStore;
 use clap::{Arg, ArgMatches, Command};
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
@@ -11,6 +16,7 @@ use libc::ENOENT;
 use rusqlite::Connection;
 use std::ffi::OsStr;
 use std::fs;
+use std::io::Cursor;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::time::{Duration, UNIX_EPOCH};
@@ -21,6 +27,8 @@ pub const CMD: &str = "fuse";
 pub struct Fuse {
     mountpoint: PathBuf,
     database: Rc<Connection>,
+    pgp: Rc<Pgp>,
+    store: Rc<Box<dyn CloudStore>>,
 }
 
 impl Fuse {
@@ -56,6 +64,8 @@ impl Fuse {
         Ok(Self {
             mountpoint: PathBuf::from(args.value_of("mountpoint").unwrap()),
             database: Rc::new(Self::database(&config["database"])?),
+            pgp: Rc::new(Self::pgp(&config["pgp"])?),
+            store: Rc::new(Self::store(&config["store"])?),
         })
     }
 
@@ -65,12 +75,44 @@ impl Fuse {
             .map_err(|e| Error::new(&format!("Error opening database {}: {}", path.display(), e)))
     }
 
+    fn pgp(config: &Yaml) -> Result<Pgp, Error> {
+        let pub_key_file = config["key"]
+            .as_str()
+            .ok_or(Error::new("Configuration key pgp.key is mandatory"))?;
+        let ascii_armor = config["ascii"].as_bool().unwrap_or(false);
+        let passphrase = config["passphrase"].as_str();
+
+        Pgp::new(pub_key_file, passphrase, ascii_armor).map_err(|e| {
+            Error::new(&format!(
+                "Error configuring pgp with public key file {}: {}",
+                pub_key_file, e
+            ))
+        })
+    }
+
+    fn store(config: &Yaml) -> Result<Box<dyn CloudStore>, Error> {
+        let store = config["type"].as_str().unwrap_or("log");
+        match store {
+            "log" => Ok(Box::new(Log::new())),
+            "local" => Ok(Box::new(Local::new(
+                config["local"]["path"].as_str().ok_or(Error::new(
+                    "Configuration key store.local.path is mandatory",
+                ))?,
+            )?)),
+            _ => Err(Error::new(&format!("Invalid store {}", store))),
+        }
+    }
+
     pub fn execute(&self) {
         let options = vec![MountOption::RO, MountOption::FSName("fs2cloud".to_string())];
         let fs = Fs2CloudFS {
             fs_repository: FsRepository::new(self.database.clone()),
             files_repository: FilesRepository::new(self.database.clone()),
+            chunks_repository: ChunksRepository::new(self.database.clone()),
+            pgp: self.pgp.clone(),
+            store: self.store.clone(),
         };
+        log::info!("Mounting FS...");
         fuser::mount2(fs, &self.mountpoint, &options).unwrap();
     }
 }
@@ -80,6 +122,9 @@ const TTL: Duration = Duration::from_secs(1);
 struct Fs2CloudFS {
     fs_repository: FsRepository,
     files_repository: FilesRepository,
+    chunks_repository: ChunksRepository,
+    pgp: Rc<Pgp>,
+    store: Rc<Box<dyn CloudStore>>,
 }
 
 impl Filesystem for Fs2CloudFS {
@@ -90,37 +135,37 @@ impl Filesystem for Fs2CloudFS {
             .find_inode_by_parent_id_and_name(Inode::from_fs_ino(parent), name)
         {
             Ok(Some(inode)) => {
-                log::debug!("lookup(fs:{}, {}) -> {:?}", parent, name, inode);
+                log::trace!("lookup(ino:{}, {}) -> {:?}", parent, name, inode);
                 reply.entry(&TTL, &inode.file_attr(&self), 0);
             }
             Ok(None) => {
-                log::debug!("lookup(fs:{}, {}) -> not found", parent, name);
+                log::trace!("lookup(ino:{}, {}) -> not found", parent, name);
                 reply.error(ENOENT)
             }
-            Err(_) => {
-                log::debug!("lookup(fs:{}, {}) -> error", parent, name);
+            Err(e) => {
+                log::error!("lookup(ino:{}, {}) -> error: {}", parent, name, e);
                 reply.error(ENOENT)
             }
         }
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
-        if let Some(inode) = match self.fs_repository.find_inode_by_id(Inode::from_fs_ino(ino)) {
-            Ok(Some(inode)) => Some(inode),
+        let inode = match self.fs_repository.find_inode_by_id(Inode::from_fs_ino(ino)) {
+            Ok(Some(inode)) => inode,
             Ok(None) => {
-                log::debug!("getattr(fs:{}) -> not found", ino);
-                None
+                log::debug!("getattr(ino:{}) -> not found", ino);
+                reply.error(ENOENT);
+                return;
             }
-            Err(_) => {
-                log::debug!("getattr(fs:{}) -> error", ino);
-                None
+            Err(e) => {
+                log::error!("getattr(ino:{}) -> error: {}", ino, e);
+                reply.error(ENOENT);
+                return;
             }
-        } {
-            log::debug!("getattr(fs:{}) -> {:?}", ino, inode);
-            reply.attr(&TTL, &inode.file_attr(&self))
-        } else {
-            reply.error(ENOENT)
-        }
+        };
+
+        log::trace!("getattr(ino:{}) -> {:?}", ino, inode);
+        reply.attr(&TTL, &inode.file_attr(&self))
     }
 
     fn read(
@@ -129,27 +174,88 @@ impl Filesystem for Fs2CloudFS {
         ino: u64,
         _fh: u64,
         offset: i64,
-        _size: u32,
+        size: u32,
         _flags: i32,
         _lock: Option<u64>,
         reply: ReplyData,
     ) {
-        if let Some(inode) = match self.fs_repository.find_inode_by_id(Inode::from_fs_ino(ino)) {
-            Ok(Some(inode)) => Some(inode),
+        log::trace!("read(ino:{}, offset:{}, size:{})", ino, offset, size);
+        let inode = match self.fs_repository.find_inode_by_id(Inode::from_fs_ino(ino)) {
+            Ok(Some(inode)) => {
+                if !inode.is_file() {
+                    log::debug!("read(ino:{}) -> error: not a file", ino);
+                    reply.error(ENOENT);
+                    return;
+                } else {
+                    inode
+                }
+            }
             Ok(None) => {
-                log::debug!("read(fs:{}) -> not found", ino);
-                None
+                log::debug!("read(ino:{}) -> not found", ino);
+                reply.error(ENOENT);
+                return;
             }
-            Err(_) => {
-                log::debug!("read(fs:{}) -> error", ino);
-                None
+            Err(e) => {
+                log::error!("read(ino:{}) -> error: {}", ino, e);
+                reply.error(ENOENT);
+                return;
             }
-        } {
-            log::debug!("read(fs:{}) -> {:?}", ino, inode);
-            reply.data(&inode.name.unwrap().as_bytes()[offset as usize..]);
-        } else {
-            reply.error(ENOENT);
+        };
+
+        let chunks = match self
+            .chunks_repository
+            .find_by_file_uuid(inode.file_uuid.unwrap())
+        {
+            Ok(chunks) => chunks,
+            Err(e) => {
+                log::error!("read(ino:{}) -> error: {}", ino, e);
+                reply.error(ENOENT);
+                return;
+            }
+        };
+
+        let mut offset = offset as usize;
+        let mut data: Vec<u8> = Vec::with_capacity(size as usize); // todo should be larger (chunk size*2) + size...
+        for chunk in chunks {
+            log::trace!(
+                "chunk {}: offset={}, buffer={}",
+                chunk.idx,
+                offset,
+                data.len()
+            );
+            if offset > chunk.payload_size {
+                log::trace!("chunk {} comes before; skipping", chunk.idx);
+                offset -= chunk.payload_size;
+                continue;
+            }
+            if data.len() >= size as usize {
+                log::trace!("read {} bytes; we are done", data.len());
+                break;
+            }
+
+            let bytes = match self.store.get(chunk.uuid) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    log::error!("read(ino:{}) -> error: {}", ino, e);
+                    reply.error(ENOENT);
+                    return;
+                }
+            };
+            match self.pgp.decrypt(Cursor::new(bytes), &mut data) {
+                Ok(bytes) => log::trace!("read(ino:{}) -> decrypted {} bytes", ino, bytes),
+                Err(e) => {
+                    log::error!("read(ino:{}) -> error: {}", ino, e);
+                    reply.error(ENOENT);
+                    return;
+                }
+            }
+            if offset > 0 {
+                data.drain(0..offset as usize);
+                offset = 0;
+            }
         }
+        log::debug!("Read {} bytes (requested: {})", data.len(), size);
+        reply.data(&data.as_slice()[0..data.len().min(size as usize)]);
     }
 
     fn readdir(
@@ -166,16 +272,16 @@ impl Filesystem for Fs2CloudFS {
             .map_err(Error::from)
         {
             Ok(inodes) => inodes,
-            Err(_) => {
-                log::debug!("readdir(fs:{}) -> not found", ino);
+            Err(e) => {
+                log::error!("readdir(ino:{}) -> error: {}", ino, e);
                 reply.error(ENOENT);
                 return;
             }
         };
 
-        log::debug!("readdir(fs:{}) -> {} inodes", ino, inodes.len());
+        log::trace!("readdir(ino:{}) -> {} inodes", ino, inodes.len());
         for (i, inode) in inodes.into_iter().enumerate().skip(offset as usize) {
-            log::debug!(" - fs:{}: {:?}", Inode::to_fs_ino(inode.id), inode);
+            log::trace!(" - ino:{}: {:?}", Inode::to_fs_ino(inode.id), inode);
             // i + 1 means the index of the next entry
             if reply.add(
                 Inode::to_fs_ino(inode.id),

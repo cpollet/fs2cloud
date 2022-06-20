@@ -7,4 +7,6 @@ pub mod s3;
 
 pub trait CloudStore {
     fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error>;
+
+    fn get(&self, object_id: Uuid) -> Result<Vec<u8>, Error>;
 }

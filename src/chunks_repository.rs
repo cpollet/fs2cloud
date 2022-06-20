@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::files_repository::File;
+use fallible_iterator::FallibleIterator;
 use rusqlite::{Connection, Row};
 use std::rc::Rc;
 use uuid::Uuid;
@@ -77,5 +78,20 @@ impl ChunksRepository {
             &[(":uuid", &uuid.to_string())],
         );
         Ok(()) // fixme
+    }
+
+    pub fn find_by_file_uuid(&self, file_uuid: Uuid) -> Result<Vec<Chunk>, Error> {
+        let mut stmt = self
+            .db
+            .prepare(include_str!("sql/chunks_list_by_file_uuid.sql"))
+            .map_err(Error::from)?;
+
+        let rows = stmt
+            .query(&[(":file_uuid", &file_uuid.to_string())])
+            .map_err(Error::from)?;
+
+        rows.map(|row| Ok(row.into()))
+            .collect()
+            .map_err(Error::from)
     }
 }
