@@ -1,7 +1,8 @@
 use crate::error::Error;
 use fallible_iterator::FallibleIterator;
-use rusqlite::{Connection, OptionalExtension, Row};
-use std::rc::Rc;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::{OptionalExtension, Row};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -38,12 +39,12 @@ impl From<&Row<'_>> for Inode {
 }
 
 pub struct FsRepository {
-    db: Rc<Connection>,
+    pool: Pool<SqliteConnectionManager>,
 }
 
 impl FsRepository {
-    pub fn new(db: Rc<Connection>) -> Self {
-        Self { db }
+    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+        Self { pool }
     }
 
     pub fn get_root(&self) -> Inode {
@@ -62,7 +63,9 @@ impl FsRepository {
         }
 
         if let Some(inode) = self
-            .db
+            .pool
+            .get()
+            .map_err(Error::from)?
             .query_row(
                 include_str!("sql/inode_find_by_parent_id_and_name.sql"),
                 &[(":parent_id", &parent.id.to_string()), (":name", &name)],
@@ -73,7 +76,9 @@ impl FsRepository {
             return Ok(inode);
         }
 
-        self.db
+        self.pool
+            .get()
+            .map_err(Error::from)?
             .execute(
                 include_str!("sql/inode_insert.sql"),
                 &[(":parent_id", &parent.id.to_string()), (":name", &name)],
@@ -89,7 +94,9 @@ impl FsRepository {
             name,
             inode
         );
-        self.db
+        self.pool
+            .get()
+            .map_err(Error::from)?
             .execute(
                 include_str!("sql/inode_insert.sql"),
                 &[
@@ -103,8 +110,9 @@ impl FsRepository {
     }
 
     pub fn find_inodes_with_parent(&self, parent_id: u64) -> Result<Vec<Inode>, Error> {
-        let mut stmt = self
-            .db
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        let mut stmt = connection
             .prepare(include_str!("sql/inode_list_by_parent_id.sql"))
             .map_err(Error::from)?;
 
@@ -121,7 +129,9 @@ impl FsRepository {
         if id == 0 {
             return Ok(Some(ROOT));
         }
-        self.db
+        self.pool
+            .get()
+            .map_err(Error::from)?
             .query_row(
                 include_str!("sql/inode_find_by_id.sql"),
                 &[(":id", &id.to_string())],
@@ -137,7 +147,9 @@ impl FsRepository {
         name: &String,
     ) -> Result<Option<Inode>, Error> {
         log::trace!("select where parent_id={} and name='{}'", parent_id, name);
-        self.db
+        self.pool
+            .get()
+            .map_err(Error::from)?
             .query_row(
                 include_str!("sql/inode_find_by_parent_id_and_name.sql"),
                 &[(":parent_id", &parent_id.to_string()), (":name", name)],

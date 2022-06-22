@@ -80,3 +80,9 @@ impl From<ScanError> for Error {
         Self { msg: e.to_string() }
     }
 }
+
+impl From<r2d2::Error> for Error {
+    fn from(e: r2d2::Error) -> Self {
+        Self { msg: e.to_string() }
+    }
+}

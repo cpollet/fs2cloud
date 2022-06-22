@@ -1,4 +1,4 @@
 #!/bin/bash
 rm test/database.db3
 cargo fmt
-time cargo run -- push -f test/data -c test/config.yml
+time cargo run -- -c test/config.yml push -f test/data

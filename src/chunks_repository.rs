@@ -1,8 +1,9 @@
 use crate::error::Error;
 use crate::files_repository::File;
 use fallible_iterator::FallibleIterator;
-use rusqlite::{Connection, Row};
-use std::rc::Rc;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::Row;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -31,12 +32,12 @@ impl From<&Row<'_>> for Chunk {
 }
 
 pub struct ChunksRepository {
-    db: Rc<Connection>,
+    pool: Pool<SqliteConnectionManager>,
 }
 
 impl ChunksRepository {
-    pub fn new(db: Rc<Connection>) -> Self {
-        ChunksRepository { db }
+    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+        ChunksRepository { pool }
     }
 
     pub fn insert(
@@ -56,7 +57,9 @@ impl ChunksRepository {
             size,
             payload_size,
         };
-        self.db
+        self.pool
+            .get()
+            .map_err(Error::from)?
             .execute(
                 include_str!("sql/chunks_insert.sql"),
                 &[
@@ -73,7 +76,7 @@ impl ChunksRepository {
     }
 
     pub fn mark_done(&self, uuid: Uuid) -> Result<(), Error> {
-        self.db.execute(
+        self.pool.get().map_err(Error::from)?.execute(
             include_str!("sql/chunks_mark_done.sql"),
             &[(":uuid", &uuid.to_string())],
         );
@@ -81,8 +84,9 @@ impl ChunksRepository {
     }
 
     pub fn find_by_file_uuid(&self, file_uuid: Uuid) -> Result<Vec<Chunk>, Error> {
-        let mut stmt = self
-            .db
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        let mut stmt = connection
             .prepare(include_str!("sql/chunks_list_by_file_uuid.sql"))
             .map_err(Error::from)?;
 

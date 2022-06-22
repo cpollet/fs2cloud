@@ -1,5 +1,4 @@
 use crate::chunks_repository::ChunksRepository;
-use crate::database;
 use crate::error::Error;
 use crate::files_repository::FilesRepository;
 use crate::fs_repository::{FsRepository, Inode};
@@ -13,66 +12,48 @@ use fuser::{
     Request,
 };
 use libc::ENOENT;
-use rusqlite::Connection;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 use std::ffi::OsStr;
-use std::fs;
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::time::{Duration, UNIX_EPOCH};
-use yaml_rust::{Yaml, YamlLoader};
+use yaml_rust::Yaml;
 
 pub const CMD: &str = "fuse";
 
 pub struct Fuse {
     mountpoint: PathBuf,
-    database: Rc<Connection>,
+    pool: Pool<SqliteConnectionManager>,
     pgp: Rc<Pgp>,
     store: Rc<Box<dyn CloudStore>>,
 }
 
 impl Fuse {
     pub fn cli() -> Command<'static> {
-        Command::new(CMD)
-            .about("Mount database as fuse FS")
-            .arg(
-                Arg::new("mountpoint")
-                    .help("FS mountpoint")
-                    .long("mountpoint")
-                    .short('m')
-                    .required(true)
-                    .takes_value(true)
-                    .forbid_empty_values(true),
-            )
-            .arg(
-                Arg::new("config")
-                    .help("configuration file")
-                    .long("config")
-                    .short('c')
-                    .required(true)
-                    .takes_value(true)
-                    .forbid_empty_values(true),
-            )
+        Command::new(CMD).about("Mount database as fuse FS").arg(
+            Arg::new("mountpoint")
+                .help("FS mountpoint")
+                .long("mountpoint")
+                .short('m')
+                .required(true)
+                .takes_value(true)
+                .forbid_empty_values(true),
+        )
     }
 
-    pub fn new(args: &ArgMatches) -> Result<Self, Error> {
-        let configs = fs::read_to_string(Path::new(args.value_of("config").unwrap()))
-            .map_err(Error::from)
-            .and_then(|yaml| YamlLoader::load_from_str(&yaml).map_err(Error::from))?;
-        let config = &configs[0];
-
+    pub fn new(
+        args: &ArgMatches,
+        config: &Yaml,
+        pool: Pool<SqliteConnectionManager>,
+    ) -> Result<Self, Error> {
         Ok(Self {
             mountpoint: PathBuf::from(args.value_of("mountpoint").unwrap()),
-            database: Rc::new(Self::database(&config["database"])?),
+            pool,
             pgp: Rc::new(Self::pgp(&config["pgp"])?),
             store: Rc::new(Self::store(&config["store"])?),
         })
-    }
-
-    fn database(config: &Yaml) -> Result<Connection, Error> {
-        let path = Path::new(config.as_str().unwrap());
-        database::open(path)
-            .map_err(|e| Error::new(&format!("Error opening database {}: {}", path.display(), e)))
     }
 
     fn pgp(config: &Yaml) -> Result<Pgp, Error> {
@@ -106,9 +87,9 @@ impl Fuse {
     pub fn execute(&self) {
         let options = vec![MountOption::RO, MountOption::FSName("fs2cloud".to_string())];
         let fs = Fs2CloudFS {
-            fs_repository: FsRepository::new(self.database.clone()),
-            files_repository: FilesRepository::new(self.database.clone()),
-            chunks_repository: ChunksRepository::new(self.database.clone()),
+            fs_repository: FsRepository::new(self.pool.clone()),
+            files_repository: FilesRepository::new(self.pool.clone()),
+            chunks_repository: ChunksRepository::new(self.pool.clone()),
             pgp: self.pgp.clone(),
             store: self.store.clone(),
         };

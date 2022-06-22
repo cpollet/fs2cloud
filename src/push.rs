@@ -3,15 +3,14 @@ use std::ffi::OsStr;
 use std::fs::{DirEntry, Metadata, ReadDir};
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::rc::Rc;
 use std::{fs, io};
 
 use crate::chunk_buf_reader::ChunkBufReader;
-use crate::database;
 use clap::{Arg, ArgMatches, Command};
-use rusqlite::Connection;
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 use uuid::Uuid;
-use yaml_rust::{Yaml, YamlLoader};
+use yaml_rust::Yaml;
 
 use crate::chunks_repository::ChunksRepository;
 use crate::error::Error;
@@ -40,36 +39,22 @@ const DEFAULT_CHUNK_SIZE: &str = "90MB";
 
 impl Push {
     pub fn cli() -> Command<'static> {
-        Command::new(CMD)
-            .about("Copy local folder to cloud")
-            .arg(
-                Arg::new("folder")
-                    .help("local folder path")
-                    .long("folder")
-                    .short('f')
-                    .required(true)
-                    .takes_value(true)
-                    .forbid_empty_values(true),
-            )
-            .arg(
-                Arg::new("config")
-                    .help("configuration file")
-                    .long("config")
-                    .short('c')
-                    .required(true)
-                    .takes_value(true)
-                    .forbid_empty_values(true),
-            )
+        Command::new(CMD).about("Copy local folder to cloud").arg(
+            Arg::new("folder")
+                .help("local folder path")
+                .long("folder")
+                .short('f')
+                .required(true)
+                .takes_value(true)
+                .forbid_empty_values(true),
+        )
     }
 
-    pub fn new(args: &ArgMatches) -> Result<Self, Error> {
-        let configs = fs::read_to_string(Path::new(args.value_of("config").unwrap()))
-            .map_err(Error::from)
-            .and_then(|yaml| YamlLoader::load_from_str(&yaml).map_err(Error::from))?;
-        let config = &configs[0];
-
-        let database = Rc::new(Self::database(&config["database"])?);
-
+    pub fn new(
+        args: &ArgMatches,
+        config: &Yaml,
+        pool: Pool<SqliteConnectionManager>,
+    ) -> Result<Self, Error> {
         let chunk_size = Byte::from_str(
             config["chunks"]["size"]
                 .as_str()
@@ -80,19 +65,13 @@ impl Push {
 
         Ok(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
-            files_repository: FilesRepository::new(database.clone()),
-            chunks_repository: ChunksRepository::new(database.clone()),
-            fs_repository: FsRepository::new(database),
+            files_repository: FilesRepository::new(pool.clone()),
+            chunks_repository: ChunksRepository::new(pool.clone()),
+            fs_repository: FsRepository::new(pool),
             chunk_size,
             pgp: Self::pgp(&config["pgp"])?,
             store: Self::store(&config["store"])?,
         })
-    }
-
-    fn database(config: &Yaml) -> Result<Connection, Error> {
-        let path = Path::new(config.as_str().unwrap());
-        database::open(path)
-            .map_err(|e| Error::new(&format!("Error opening database {}: {}", path.display(), e)))
     }
 
     fn pgp(config: &Yaml) -> Result<Pgp, Error> {

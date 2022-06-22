@@ -7,6 +7,15 @@ fn build_cli() -> Command<'static> {
     command!()
         .subcommand_required(true)
         .arg_required_else_help(true)
+        .arg(
+            Arg::new("config")
+                .help("configuration file")
+                .long("config")
+                .short('c')
+                .required(true)
+                .takes_value(true)
+                .forbid_empty_values(true),
+        )
         .subcommand(
             Command::new("autocomplete")
                 .about("generates autocompletion for shells")

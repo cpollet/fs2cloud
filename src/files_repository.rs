@@ -1,8 +1,9 @@
 use crate::error::Error;
 use fallible_iterator::FallibleIterator;
-use rusqlite::{Connection, OptionalExtension, Row};
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::{OptionalExtension, Row};
 use std::path::Path;
-use std::rc::Rc;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -26,12 +27,12 @@ impl From<&Row<'_>> for File {
 }
 
 pub struct FilesRepository {
-    db: Rc<Connection>,
+    pool: Pool<SqliteConnectionManager>,
 }
 
 impl FilesRepository {
-    pub fn new(db: Rc<Connection>) -> Self {
-        FilesRepository { db }
+    pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
+        FilesRepository { pool }
     }
 
     pub fn insert(&self, path: String, sha256: String, size: usize) -> Result<File, Error> {
@@ -41,7 +42,9 @@ impl FilesRepository {
             sha256,
             size,
         };
-        self.db
+        self.pool
+            .get()
+            .map_err(Error::from)?
             .execute(
                 include_str!("sql/files_insert.sql"),
                 &[
@@ -56,7 +59,9 @@ impl FilesRepository {
     }
 
     pub fn find_by_path(&self, path: &Path) -> Result<Option<File>, Error> {
-        self.db
+        self.pool
+            .get()
+            .map_err(Error::from)?
             .query_row(
                 include_str!("sql/files_find_by_path.sql"),
                 &[(":path", &path.display().to_string())],
@@ -67,7 +72,9 @@ impl FilesRepository {
     }
 
     pub fn find_by_uuid(&self, uuid: Uuid) -> Result<Option<File>, Error> {
-        self.db
+        self.pool
+            .get()
+            .map_err(Error::from)?
             .query_row(
                 include_str!("sql/files_find_by_uuid.sql"),
                 &[(":uuid", &uuid.to_string())],
@@ -78,8 +85,9 @@ impl FilesRepository {
     }
 
     pub fn list_by_status(&self, status: &str) -> Result<Vec<File>, Error> {
-        let mut stmt = self
-            .db
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        let mut stmt = connection
             .prepare(include_str!("sql/files_list_by_status.sql"))
             .map_err(Error::from)?;
 
@@ -91,7 +99,7 @@ impl FilesRepository {
     }
 
     pub fn mark_done(&self, uuid: Uuid) -> Result<(), Error> {
-        self.db.execute(
+        self.pool.get().map_err(Error::from)?.execute(
             include_str!("sql/files_mark_done.sql"),
             &[(":uuid", &uuid.to_string())],
         );
