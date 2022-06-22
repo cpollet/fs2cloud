@@ -11,13 +11,15 @@ use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
     Request,
 };
-use libc::ENOENT;
+use libc::{ENOENT, SIGINT};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use signal_hook::iterator::{Signals, SignalsInfo};
 use std::ffi::OsStr;
 use std::io::Cursor;
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 use yaml_rust::Yaml;
 
@@ -26,8 +28,8 @@ pub const CMD: &str = "fuse";
 pub struct Fuse {
     mountpoint: PathBuf,
     pool: Pool<SqliteConnectionManager>,
-    pgp: Rc<Pgp>,
-    store: Rc<Box<dyn CloudStore>>,
+    pgp: Arc<Pgp>,
+    store: Arc<Box<dyn CloudStore>>,
 }
 
 impl Fuse {
@@ -51,8 +53,8 @@ impl Fuse {
         Ok(Self {
             mountpoint: PathBuf::from(args.value_of("mountpoint").unwrap()),
             pool,
-            pgp: Rc::new(Self::pgp(&config["pgp"])?),
-            store: Rc::new(Self::store(&config["store"])?),
+            pgp: Arc::new(Self::pgp(&config["pgp"])?),
+            store: Arc::new(Self::store(&config["store"])?),
         })
     }
 
@@ -93,8 +95,20 @@ impl Fuse {
             pgp: self.pgp.clone(),
             store: self.store.clone(),
         };
-        log::info!("Mounting FS...");
-        fuser::mount2(fs, &self.mountpoint, &options).unwrap();
+
+        let fs_handle = match fuser::spawn_mount2(fs, &self.mountpoint, &options) {
+            Ok(h) => h,
+            Err(e) => panic!("Unable to start FS thread: {}", e),
+        };
+
+        log::info!("FS mounted. CTRL+C to unmount");
+        let mut signals = match Signals::new(&[SIGINT]) {
+            Ok(s) => s,
+            Err(e) => panic!("{}", e),
+        };
+        signals.forever().next();
+        fs_handle.join();
+        log::info!("FS unmounted");
     }
 }
 
@@ -104,8 +118,8 @@ struct Fs2CloudFS {
     fs_repository: FsRepository,
     files_repository: FilesRepository,
     chunks_repository: ChunksRepository,
-    pgp: Rc<Pgp>,
-    store: Rc<Box<dyn CloudStore>>,
+    pgp: Arc<Pgp>,
+    store: Arc<Box<dyn CloudStore>>,
 }
 
 impl Filesystem for Fs2CloudFS {

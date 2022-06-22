@@ -24,6 +24,7 @@ rust-s3 = { version = "0.31.0", default-features = false, features = ["sync"] }
 rusqlite = { version = "0.26.3", features = ["bundled"] }
 sequoia-openpgp = "1.9.0"
 sha256 = "1.0.3"
+signal-hook = "0.3.14"
 time = "0.3.9"
 uuid = { version = "1.1.1", features = ["v4", "fast-rng"] }
 yaml-rust = "0.4.5"
