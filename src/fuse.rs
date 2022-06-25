@@ -14,12 +14,11 @@ use fuser::{
 use libc::{ENOENT, SIGINT};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use signal_hook::iterator::{Signals, SignalsInfo};
+use signal_hook::iterator::Signals ;
 use std::ffi::OsStr;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
 use yaml_rust::Yaml;
 
