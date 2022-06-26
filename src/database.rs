@@ -8,8 +8,12 @@ mod embedded {
     embed_migrations!("src/sql/migrations");
 }
 
-pub fn open(path: &str) -> Result<Pool<SqliteConnectionManager>, Error> {
-    let manager = SqliteConnectionManager::file(path);
+pub trait DatabaseConfig {
+    fn get_database_path(&self) -> Result<&str, Error>;
+}
+
+pub fn open(config: &dyn DatabaseConfig) -> Result<Pool<SqliteConnectionManager>, Error> {
+    let manager = SqliteConnectionManager::file(config.get_database_path()?);
     let pool = Pool::new(manager).map_err(Error::from)?;
 
     let mut connection = pool.get().map_err(Error::from)?;

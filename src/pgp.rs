@@ -23,6 +23,12 @@ pub struct Pgp {
     policy: Box<dyn Policy>,
 }
 
+pub trait PgpConfig {
+    fn get_pgp_key(&self) -> Result<&str, Error>;
+    fn get_pgp_armor(&self) -> bool;
+    fn get_pgp_passphrase(&self) -> Option<&str>;
+}
+
 impl Pgp {
     pub fn new(
         cert_file: &str,

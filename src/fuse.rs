@@ -2,10 +2,10 @@ use crate::chunks_repository::ChunksRepository;
 use crate::error::Error;
 use crate::files_repository::FilesRepository;
 use crate::fs_repository::{FsRepository, Inode};
-use crate::pgp::Pgp;
+use crate::pgp::{Pgp, PgpConfig};
 use crate::store::local::Local;
 use crate::store::log::Log;
-use crate::store::CloudStore;
+use crate::store::{CloudStore, StoreConfig, StoreKind};
 use clap::{Arg, ArgMatches, Command};
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
@@ -14,13 +14,12 @@ use fuser::{
 use libc::{ENOENT, SIGINT};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use signal_hook::iterator::Signals ;
+use signal_hook::iterator::Signals;
 use std::ffi::OsStr;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
-use yaml_rust::Yaml;
 
 pub const CMD: &str = "fuse";
 
@@ -30,6 +29,8 @@ pub struct Fuse {
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
 }
+
+pub trait FuseConfig: StoreConfig + PgpConfig {}
 
 impl Fuse {
     pub fn cli() -> Command<'static> {
@@ -46,23 +47,21 @@ impl Fuse {
 
     pub fn new(
         args: &ArgMatches,
-        config: &Yaml,
+        config: &dyn FuseConfig,
         pool: Pool<SqliteConnectionManager>,
     ) -> Result<Self, Error> {
         Ok(Self {
             mountpoint: PathBuf::from(args.value_of("mountpoint").unwrap()),
             pool,
-            pgp: Arc::new(Self::pgp(&config["pgp"])?),
-            store: Arc::new(Self::store(&config["store"])?),
+            pgp: Arc::new(Self::pgp(config)?),
+            store: Arc::new(Self::store(config)?),
         })
     }
 
-    fn pgp(config: &Yaml) -> Result<Pgp, Error> {
-        let pub_key_file = config["key"]
-            .as_str()
-            .ok_or(Error::new("Configuration key pgp.key is mandatory"))?;
-        let ascii_armor = config["ascii"].as_bool().unwrap_or(false);
-        let passphrase = config["passphrase"].as_str();
+    fn pgp(config: &dyn FuseConfig) -> Result<Pgp, Error> {
+        let pub_key_file = config.get_pgp_key()?;
+        let ascii_armor = config.get_pgp_armor();
+        let passphrase = config.get_pgp_passphrase();
 
         Pgp::new(pub_key_file, passphrase, ascii_armor).map_err(|e| {
             Error::new(&format!(
@@ -72,16 +71,13 @@ impl Fuse {
         })
     }
 
-    fn store(config: &Yaml) -> Result<Box<dyn CloudStore>, Error> {
-        let store = config["type"].as_str().unwrap_or("log");
+    fn store(config: &dyn FuseConfig) -> Result<Box<dyn CloudStore>, Error> {
+        let store = config.get_store_type();
         match store {
-            "log" => Ok(Box::new(Log::new())),
-            "local" => Ok(Box::new(Local::new(
-                config["local"]["path"].as_str().ok_or(Error::new(
-                    "Configuration key store.local.path is mandatory",
-                ))?,
-            )?)),
-            _ => Err(Error::new(&format!("Invalid store {}", store))),
+            Ok(StoreKind::Log) => Ok(Box::new(Log::new())),
+            Ok(StoreKind::S3) => Err(Error::new("S3 is not supported")),
+            Ok(StoreKind::Local) => Ok(Box::new(Local::new(config.get_local_store_path()?)?)),
+            Err(e) => Err(e),
         }
     }
 

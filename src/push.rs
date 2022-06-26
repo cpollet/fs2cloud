@@ -10,17 +10,16 @@ use clap::{Arg, ArgMatches, Command};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use uuid::Uuid;
-use yaml_rust::Yaml;
 
 use crate::chunks_repository::ChunksRepository;
 use crate::error::Error;
 use crate::files_repository::{File, FilesRepository};
 use crate::fs_repository::FsRepository;
-use crate::pgp::Pgp;
+use crate::pgp::{Pgp, PgpConfig};
 use crate::store::local::Local;
 use crate::store::log::Log;
 use crate::store::s3::S3;
-use crate::store::CloudStore;
+use crate::store::{CloudStore, StoreConfig, StoreKind};
 
 pub struct Push {
     folder: PathBuf,
@@ -32,10 +31,11 @@ pub struct Push {
     store: Box<dyn CloudStore>,
 }
 
-pub const CMD: &str = "push";
+pub trait PushConfig: PgpConfig + StoreConfig {
+    fn get_chunk_size(&self) -> Byte;
+}
 
-const MAX_CHUNK_SIZE: &str = "1GB";
-const DEFAULT_CHUNK_SIZE: &str = "90MB";
+pub const CMD: &str = "push";
 
 impl Push {
     pub fn cli() -> Command<'static> {
@@ -52,33 +52,23 @@ impl Push {
 
     pub fn new(
         args: &ArgMatches,
-        config: &Yaml,
+        config: &dyn PushConfig,
         pool: Pool<SqliteConnectionManager>,
     ) -> Result<Self, Error> {
-        let chunk_size = Byte::from_str(
-            config["chunks"]["size"]
-                .as_str()
-                .unwrap_or(DEFAULT_CHUNK_SIZE),
-        )
-        .unwrap()
-        .min(Byte::from_str(MAX_CHUNK_SIZE).unwrap());
-
         Ok(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
             files_repository: FilesRepository::new(pool.clone()),
             chunks_repository: ChunksRepository::new(pool.clone()),
             fs_repository: FsRepository::new(pool),
-            chunk_size,
-            pgp: Self::pgp(&config["pgp"])?,
-            store: Self::store(&config["store"])?,
+            chunk_size: config.get_chunk_size(),
+            pgp: Self::pgp(config)?,
+            store: Self::store(config)?,
         })
     }
 
-    fn pgp(config: &Yaml) -> Result<Pgp, Error> {
-        let pub_key_file = config["key"]
-            .as_str()
-            .ok_or(Error::new("Configuration key pgp.key is mandatory"))?;
-        let ascii_armor = config["ascii"].as_bool().unwrap_or(false);
+    fn pgp(config: &dyn PushConfig) -> Result<Pgp, Error> {
+        let pub_key_file = config.get_pgp_key()?;
+        let ascii_armor = config.get_pgp_armor();
 
         Pgp::new(pub_key_file, None, ascii_armor).map_err(|e| {
             Error::new(&format!(
@@ -88,34 +78,25 @@ impl Push {
         })
     }
 
-    fn store(config: &Yaml) -> Result<Box<dyn CloudStore>, Error> {
-        let store = config["type"].as_str().unwrap_or("log");
+    fn store(config: &dyn PushConfig) -> Result<Box<dyn CloudStore>, Error> {
+        let store = config.get_store_type();
         match store {
-            "log" => Ok(Box::new(Log::new())),
-            "s3" => Self::s3(&config["s3"]),
-            "local" => Ok(Box::new(Local::new(
-                config["local"]["path"].as_str().ok_or(Error::new(
-                    "Configuration key store.local.path is mandatory",
-                ))?,
-            )?)),
-            _ => Err(Error::new(&format!("Invalid store {}", store))),
+            Ok(StoreKind::Log) => Ok(Box::new(Log::new())),
+            Ok(StoreKind::S3) => Self::s3(config),
+            Ok(StoreKind::Local) => Ok(Box::new(Local::new(config.get_local_store_path()?)?)),
+            Err(e) => Err(e),
         }
     }
 
-    fn s3(config: &Yaml) -> Result<Box<dyn CloudStore>, Error> {
-        let access_key = config["access_key"].as_str();
-        let secret_key = config["secret_key"].as_str();
-        let region = config["region"].as_str();
-        let bucket = config["bucket"].as_str();
-
-        match (region, bucket) {
-            (Some(region), Some(bucket)) => match S3::new(region, bucket, access_key, secret_key) {
-                Ok(s3) => Ok(Box::from(s3)),
-                Err(e) => Err(Error::new(&format!("Error configuring S3: {}", e))),
-            },
-            _ => Err(Error::new(
-                "Configuration keys store.s3.region and store.s3.bucket are mandatory",
-            )),
+    fn s3(config: &dyn PushConfig) -> Result<Box<dyn CloudStore>, Error> {
+        match S3::new(
+            config.get_s3_region()?,
+            config.get_s3_bucket()?,
+            config.get_s3_access_key(),
+            config.get_s3_secret_key(),
+        ) {
+            Ok(s3) => Ok(Box::from(s3)),
+            Err(e) => Err(Error::new(&format!("Error configuring S3: {}", e))),
         }
     }
 
