@@ -1,3 +1,4 @@
 #!/bin/bash
 cargo fmt
-time cargo run -- -c test/config.yml export
+cargo run -- -c test/config.yml export > test/database.json
+jq '.' test/database.json

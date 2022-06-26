@@ -159,7 +159,7 @@ impl Push {
                     .and_then(|f| self.process_file(f))
                     .and_then(|f| {
                         let mut inode = self.fs_repository.get_root();
-                        let parent = local_path.parent().unwrap_or(Path::new(""));
+                        let parent = local_path.parent().unwrap_or_else(|| Path::new(""));
                         for component in parent.iter() {
                             inode = match self
                                 .fs_repository
