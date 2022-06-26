@@ -2,6 +2,7 @@ extern crate core;
 
 use crate::config::Config;
 use crate::error::Error;
+use crate::export::Export;
 use crate::fuse::Fuse;
 use crate::opts::parse;
 use crate::pgp::Pgp;
@@ -13,6 +14,7 @@ mod chunks_repository;
 mod config;
 mod database;
 mod error;
+mod export;
 mod files_repository;
 mod fs_repository;
 mod fuse;
@@ -62,6 +64,10 @@ fn run() -> Result<(), Error> {
             }
             Some((fuse::CMD, args)) => {
                 Fuse::new(args, pool, Pgp::new(&config)?, store::new(&config)?)?.execute();
+                Ok(())
+            }
+            Some((export::CMD, _args)) => {
+                Export::new(pool)?.execute();
                 Ok(())
             }
             Some((cmd, _)) => Err(Error::new(&format!("Invalid command: {}", cmd))),

@@ -1,4 +1,4 @@
-use crate::error::Error;
+use crate::Error;
 use fallible_iterator::FallibleIterator;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -104,5 +104,19 @@ impl FilesRepository {
             &[(":uuid", &uuid.to_string())],
         );
         Ok(()) // fixme
+    }
+
+    pub fn list_all(&self) -> Result<Vec<File>, Error> {
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        let mut stmt = connection
+            .prepare(include_str!("sql/files_list_all.sql"))
+            .map_err(Error::from)?;
+
+        let rows = stmt.query([]).map_err(Error::from)?;
+
+        rows.map(|row| Ok(row.into()))
+            .collect()
+            .map_err(Error::from)
     }
 }

@@ -558,6 +558,8 @@ dependencies = [
  "rusqlite",
  "rust-s3",
  "sequoia-openpgp",
+ "serde",
+ "serde_json",
  "sha256",
  "signal-hook",
  "time",
