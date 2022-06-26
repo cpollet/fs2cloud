@@ -95,7 +95,7 @@ pub mod import {
     use crate::export_import::JsonFile;
     use crate::files_repository::FilesRepository;
     use crate::fs_repository::FsRepository;
-    use crate::Error;
+    use crate::{fs, Error};
     use clap::Command;
     use r2d2::Pool;
     use r2d2_sqlite::SqliteConnectionManager;
@@ -165,29 +165,7 @@ pub mod import {
                         }
                     }
 
-                    let mut inode = self.fs_repository.get_root();
-                    let parent = path.parent().unwrap_or_else(|| Path::new(""));
-                    for component in parent.iter() {
-                        inode = match self
-                            .fs_repository
-                            .get_inode(&inode, &component.to_str().unwrap().to_string())
-                        {
-                            Ok(inode) => inode,
-                            Err(e) => {
-                                log::error!(
-                                    "Cannot find inode for {} under {}: {}",
-                                    component.to_str().unwrap(),
-                                    inode.id,
-                                    e
-                                );
-                                self.fs_repository.get_root()
-                            }
-                        };
-                    }
-                    if let Err(e) = self
-                        .fs_repository
-                        .insert_file(db_file.uuid, &file.path, &inode)
-                    {
+                    if let Err(e) = fs::insert(&db_file.uuid, path, &self.fs_repository) {
                         log::error!("Cannot insert inode for {}: {}", file.path, e);
                     }
                 }

@@ -17,6 +17,7 @@ mod database;
 mod error;
 mod export_import;
 mod files_repository;
+mod fs;
 mod fs_repository;
 mod fuse;
 mod opts;

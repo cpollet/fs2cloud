@@ -87,7 +87,7 @@ impl FsRepository {
         self.get_inode(parent, name)
     }
 
-    pub fn insert_file(&self, file_uuid: Uuid, name: &String, inode: &Inode) -> Result<(), Error> {
+    pub fn insert_file(&self, file_uuid: &Uuid, name: &String, inode: &Inode) -> Result<(), Error> {
         log::debug!(
             "Insert {} with name {} as child of {:?}",
             file_uuid,

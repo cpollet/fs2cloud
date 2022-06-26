@@ -157,28 +157,7 @@ impl Push {
                         )
                     })
                     .and_then(|f| self.process_file(f))
-                    .and_then(|f| {
-                        let mut inode = self.fs_repository.get_root();
-                        let parent = local_path.parent().unwrap_or_else(|| Path::new(""));
-                        for component in parent.iter() {
-                            inode = match self
-                                .fs_repository
-                                .get_inode(&inode, &component.to_str().unwrap().to_string())
-                            {
-                                Ok(inode) => inode,
-                                Err(e) => return Err(e),
-                            };
-                        }
-                        self.fs_repository.insert_file(
-                            f.uuid,
-                            &local_path
-                                .file_name()
-                                .and_then(OsStr::to_str)
-                                .unwrap()
-                                .to_string(),
-                            &inode,
-                        )
-                    })
+                    .and_then(|f| crate::fs::insert(&f.uuid, &local_path, &self.fs_repository))
                 {
                     self.print_err(&file.path(), e)
                 } else {
