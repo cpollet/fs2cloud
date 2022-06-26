@@ -1,6 +1,7 @@
 use crate::error::Error;
+use sequoia_openpgp::cert::prelude::ValidErasedKeyAmalgamation;
 use sequoia_openpgp::crypto::{KeyPair, SessionKey};
-use sequoia_openpgp::packet::key::{PublicParts, UnspecifiedRole};
+use sequoia_openpgp::packet::key::{PublicParts, SecretParts, UnspecifiedRole};
 use sequoia_openpgp::packet::{Key, PKESK, SKESK};
 use sequoia_openpgp::parse::stream::{
     DecryptionHelper, DecryptorBuilder, MessageStructure, VerificationHelper,
@@ -39,59 +40,67 @@ impl Pgp {
         let mode = KeyFlags::empty()
             .set_transport_encryption()
             .set_storage_encryption();
-        let cert = Cert::from_file(config.get_pgp_key()?).map_err(Error::from)?;
-        let cert = cert.with_policy(&policy, None).map_err(Error::from)?;
+        let cert = Cert::from_file(config.get_pgp_key()?)?;
+        let cert = cert.with_policy(&policy, None)?;
 
+        let passphrase = config.get_pgp_passphrase();
         let mut public_keys = HashMap::new();
         let mut secret_keys = HashMap::new();
-        for key in cert
+        let keys = cert
             .keys()
             .supported()
             .alive()
             .revoked(false)
-            .key_flags(&mode)
-        {
-            let passphrase = config.get_pgp_passphrase();
-            // todo refactor this
-            if key.has_secret() && passphrase.is_some() {
-                log::trace!("Key has secret part");
-                let key_with_clear_secret = key
-                    .clone()
-                    .parts_into_secret()
-                    .map_err(Error::from)?
-                    .key()
-                    .to_owned()
-                    .decrypt_secret(&passphrase.unwrap().into())
-                    .ok();
-                if let Some(key) = key_with_clear_secret {
+            .key_flags(&mode);
+        for key in keys {
+            match Self::decrypt_secret_part(&key, passphrase) {
+                Ok(Some(key)) => {
                     secret_keys.insert(
                         key.keyid(),
                         (cert.fingerprint(), key.into_keypair().map_err(Error::from)?),
                     );
-                } else {
-                    eprintln!("Could not decrypt {}'s secret", key.keyid());
+                }
+                Ok(None) => {
                     public_keys.insert(key.keyid(), (cert.fingerprint(), key.key().clone()));
                 }
-            } else {
-                public_keys.insert(key.keyid(), (cert.fingerprint(), key.key().clone()));
+                Err(e) => {
+                    log::warn!("Could not decrypt {}'s secret part: {}", key.keyid(), e);
+                    public_keys.insert(key.keyid(), (cert.fingerprint(), key.key().clone()));
+                }
             }
         }
 
-        if secret_keys.is_empty() && public_keys.is_empty() {
-            // todo depends on the context...
-            Err(Error::new("No keys found."))
-        } else {
-            log::debug!(
-                "Read {} public keys and {} secret keys",
-                public_keys.len(),
-                secret_keys.len()
-            );
-            Ok(Pgp {
-                public_keys,
-                secret_keys,
-                ascii_armor: config.get_pgp_armor(),
-                policy: Box::new(policy),
-            })
+        log::debug!(
+            "Read {} public keys and {} secret keys",
+            public_keys.len(),
+            secret_keys.len()
+        );
+        Ok(Pgp {
+            public_keys,
+            secret_keys,
+            ascii_armor: config.get_pgp_armor(),
+            policy: Box::new(policy),
+        })
+    }
+
+    fn decrypt_secret_part(
+        key: &ValidErasedKeyAmalgamation<PublicParts>,
+        passphrase: Option<&str>,
+    ) -> Result<Option<Key<SecretParts, UnspecifiedRole>>, Error> {
+        if !key.has_secret() {
+            return Ok(None);
+        }
+
+        match passphrase {
+            None => Err(Error::new("no passphrase given")),
+            Some(passphrase) => key
+                .clone()
+                .parts_into_secret()?
+                .key()
+                .to_owned()
+                .decrypt_secret(&passphrase.into())
+                .map_err(Error::from)
+                .map(Option::from),
         }
     }
 
@@ -104,16 +113,13 @@ impl Pgp {
         if self.ascii_armor {
             message = Armorer::new(message).build().unwrap();
         }
-        let message = Encryptor::for_recipients(message, self.get_recipients())
-            .build()
-            .map_err(Error::from)?;
+        let message = Encryptor::for_recipients(message, self.get_recipients()).build()?;
         let message = Compressor::new(message)
             .algo(CompressionAlgorithm::BZip2)
-            .build()
-            .map_err(Error::from)?;
-        let mut message = LiteralWriter::new(message).build().map_err(Error::from)?;
+            .build()?;
+        let mut message = LiteralWriter::new(message).build()?;
 
-        let read = io::copy(reader, &mut message).map_err(Error::from)?;
+        let read = io::copy(reader, &mut message)?;
         match message.finalize().map_err(Error::from) {
             Ok(_) => Ok(read as usize),
             Err(e) => Err(e),
@@ -138,9 +144,8 @@ impl Pgp {
         R: Read + Send + Sync,
         W: Write,
     {
-        let mut decryptor = DecryptorBuilder::from_reader(reader)
-            .map_err(Error::from)?
-            .with_policy(self.policy.as_ref(), None, self)?;
+        let mut decryptor =
+            DecryptorBuilder::from_reader(reader)?.with_policy(self.policy.as_ref(), None, self)?;
 
         Ok(io::copy(&mut decryptor, writer)? as usize)
     }
