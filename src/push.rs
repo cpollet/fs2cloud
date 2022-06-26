@@ -1,5 +1,4 @@
 use byte_unit::Byte;
-use std::ffi::OsStr;
 use std::fs::{DirEntry, Metadata, ReadDir};
 use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};

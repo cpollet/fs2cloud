@@ -21,7 +21,7 @@ r2d2 = "0.8.10"
 r2d2_sqlite = { version = "0.19.0", features = ["bundled"] }
 refinery = { version = "0.8.4", features = ["rusqlite"] }
 rust-s3 = { version = "0.31.0", default-features = false, features = ["sync"] }
-rusqlite = { version = "0.26.3", features = ["bundled"] }
+rusqlite = { version = "0.26.3", features = ["bundled", "array"] }
 sequoia-openpgp = "1.9.0"
 serde = "1.0.137"
 serde_json = "1.0.81"

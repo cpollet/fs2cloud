@@ -96,7 +96,7 @@ impl Filesystem for Fs2CloudFS {
         let name = &name.to_str().unwrap().to_string();
         match self
             .fs_repository
-            .find_inode_by_parent_id_and_name(Inode::from_fs_ino(parent), name)
+            .find_inode_by_name_and_parent_id(name, Inode::from_fs_ino(parent))
         {
             Ok(Some(inode)) => {
                 log::trace!("lookup(ino:{}, {}) -> {:?}", parent, name, inode);

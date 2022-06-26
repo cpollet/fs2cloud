@@ -51,62 +51,78 @@ impl FsRepository {
         ROOT
     }
 
-    // todo refactor names, signature, etc.
-    pub fn get_inode(&self, parent: &Inode, name: &String) -> Result<Inode, Error> {
-        log::debug!("Find child of {:?} named {}", parent, name);
+    pub fn get_inode_by_name_and_parent_id(
+        &self,
+        name: &String,
+        parent_id: u64,
+    ) -> Result<Inode, Error> {
+        log::debug!("Find child of {} named {}", parent_id, name);
 
-        if parent.id == 0 && name.is_empty() {
-            return Ok(ROOT);
+        if let Some(inode) = self.find_inode_by_name_and_parent_id(name, parent_id)? {
+            return Ok(inode);
+        }
+        self.insert_inode(name, parent_id, None)?;
+        self.get_inode_by_name_and_parent_id(name, parent_id)
+    }
+
+    pub fn find_inode_by_name_and_parent_id(
+        &self,
+        name: &String,
+        parent_id: u64,
+    ) -> Result<Option<Inode>, Error> {
+        if parent_id == 0 && name.is_empty() {
+            return Ok(Some(self.get_root()));
         }
         if name.is_empty() {
             return Err(Error::new("non-root inode without name"));
         }
 
-        if let Some(inode) = self
-            .pool
+        log::trace!("select where parent_id={} and name='{}'", parent_id, name);
+        self.pool
             .get()
             .map_err(Error::from)?
             .query_row(
                 include_str!("sql/inode_find_by_parent_id_and_name.sql"),
-                &[(":parent_id", &parent.id.to_string()), (":name", &name)],
+                &[(":name", name), (":parent_id", &parent_id.to_string())],
                 |row| Ok(row.into()),
             )
-            .optional()?
-        {
-            return Ok(inode);
-        }
-
-        self.pool
-            .get()
-            .map_err(Error::from)?
-            .execute(
-                include_str!("sql/inode_insert.sql"),
-                &[(":parent_id", &parent.id.to_string()), (":name", &name)],
-            )
-            .map_err(Error::from)?;
-        self.get_inode(parent, name)
+            .optional()
+            .map_err(Error::from)
     }
 
-    pub fn insert_file(&self, file_uuid: &Uuid, name: &String, inode: &Inode) -> Result<(), Error> {
+    pub fn insert_inode(
+        &self,
+        name: &String,
+        parent_id: u64,
+        file_uuid: Option<&Uuid>,
+    ) -> Result<(), Error> {
         log::debug!(
-            "Insert {} with name {} as child of {:?}",
-            file_uuid,
+            "Insert {} with name {} as child of {}",
+            file_uuid
+                .map(Uuid::to_string)
+                .unwrap_or_else(|| "0000".to_string()),
             name,
-            inode
+            parent_id
         );
-        self.pool
-            .get()
-            .map_err(Error::from)?
-            .execute(
+
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        match file_uuid {
+            None => connection.execute(
+                include_str!("sql/inode_insert.sql"),
+                &[(":parent_id", &parent_id.to_string()), (":name", name)],
+            ),
+            Some(uuid) => connection.execute(
                 include_str!("sql/inode_insert.sql"),
                 &[
-                    (":parent_id", &inode.id.to_string()),
-                    (":name", &name),
-                    (":file_uuid", &file_uuid.to_string()),
+                    (":parent_id", &parent_id.to_string()),
+                    (":name", name),
+                    (":file_uuid", &uuid.to_string()),
                 ],
-            )
-            .map_err(Error::from)
-            .map(|_| ())
+            ),
+        }
+        .map_err(Error::from)
+        .map(|_| ())
     }
 
     pub fn find_inodes_with_parent(&self, parent_id: u64) -> Result<Vec<Inode>, Error> {
@@ -135,24 +151,6 @@ impl FsRepository {
             .query_row(
                 include_str!("sql/inode_find_by_id.sql"),
                 &[(":id", &id.to_string())],
-                |row| Ok(row.into()),
-            )
-            .optional()
-            .map_err(Error::from)
-    }
-
-    pub fn find_inode_by_parent_id_and_name(
-        &self,
-        parent_id: u64,
-        name: &String,
-    ) -> Result<Option<Inode>, Error> {
-        log::trace!("select where parent_id={} and name='{}'", parent_id, name);
-        self.pool
-            .get()
-            .map_err(Error::from)?
-            .query_row(
-                include_str!("sql/inode_find_by_parent_id_and_name.sql"),
-                &[(":parent_id", &parent_id.to_string()), (":name", name)],
                 |row| Ok(row.into()),
             )
             .optional()
