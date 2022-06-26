@@ -8,7 +8,7 @@ use crate::fuse::Fuse;
 use crate::opts::parse;
 use crate::pgp::Pgp;
 use crate::pull::Pull;
-use crate::push::Push;
+use crate::push::{Push, PushConfig};
 
 mod chunk_buf_reader;
 mod chunks_repository;
@@ -65,7 +65,14 @@ fn run() -> Result<(), Error> {
                 Ok(())
             }
             Some((fuse::CMD, args)) => {
-                Fuse::new(args, pool, Pgp::new(&config)?, store::new(&config)?)?.execute();
+                Fuse::new(
+                    args,
+                    pool,
+                    Pgp::new(&config)?,
+                    store::new(&config)?,
+                    config.get_chunk_size(),
+                )?
+                .execute();
                 Ok(())
             }
             Some((export_import::export::CMD, _args)) => {

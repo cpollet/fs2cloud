@@ -4,6 +4,7 @@ use crate::files_repository::FilesRepository;
 use crate::fs_repository::{FsRepository, Inode};
 use crate::pgp::Pgp;
 use crate::store::CloudStore;
+use byte_unit::Byte;
 use clap::{Arg, ArgMatches, Command};
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
@@ -26,6 +27,7 @@ pub struct Fuse {
     pool: Pool<SqliteConnectionManager>,
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
+    chunk_size: Byte,
 }
 
 impl Fuse {
@@ -46,12 +48,14 @@ impl Fuse {
         pool: Pool<SqliteConnectionManager>,
         pgp: Pgp,
         store: Box<dyn CloudStore>,
+        chunk_size: Byte,
     ) -> Result<Self, Error> {
         Ok(Self {
             mountpoint: PathBuf::from(args.value_of("mountpoint").unwrap()),
             pool,
             pgp: Arc::new(pgp),
             store: Arc::new(store),
+            chunk_size,
         })
     }
 
@@ -63,6 +67,7 @@ impl Fuse {
             chunks_repository: ChunksRepository::new(self.pool.clone()),
             pgp: self.pgp.clone(),
             store: self.store.clone(),
+            chunk_size: self.chunk_size,
         };
 
         let fs_handle = match fuser::spawn_mount2(fs, &self.mountpoint, &options) {
@@ -89,6 +94,7 @@ struct Fs2CloudFS {
     chunks_repository: ChunksRepository,
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
+    chunk_size: Byte,
 }
 
 impl Filesystem for Fs2CloudFS {
@@ -178,8 +184,14 @@ impl Filesystem for Fs2CloudFS {
             }
         };
 
+        // in the worst case, we could read:
+        //  - 1 bytes from chunk n
+        //  - size-2 bytes from chunks n+1..m
+        //  - 1 byte from m+1
+        // we could need to waste 2 chunks worth of bytes to read 2 bytes, hence chunk_size*2 below
+        let mut data: Vec<u8> =
+            Vec::with_capacity((self.chunk_size.get_bytes() * 2 + (size - 2) as u128) as usize);
         let mut offset = offset as usize;
-        let mut data: Vec<u8> = Vec::with_capacity(size as usize); // todo should be larger (chunk size*2) + size...
         for chunk in chunks {
             log::trace!(
                 "chunk {}: offset={}, buffer={}",
