@@ -4,6 +4,7 @@ use crate::config::Config;
 use crate::error::Error;
 use crate::fuse::Fuse;
 use crate::opts::parse;
+use crate::pgp::Pgp;
 use crate::pull::Pull;
 use crate::push::Push;
 
@@ -45,15 +46,22 @@ fn run() -> Result<(), Error> {
 
         match args.subcommand() {
             Some((push::CMD, args)) => {
-                Push::new(args, &config, pool)?.execute();
+                Push::new(
+                    args,
+                    &config,
+                    pool,
+                    Pgp::new(&config)?,
+                    store::new(&config)?,
+                )?
+                .execute();
                 Ok(())
             }
             Some((pull::CMD, args)) => {
-                Pull::new(args, &config, pool).execute();
+                Pull::new(args, pool).execute();
                 Ok(())
             }
             Some((fuse::CMD, args)) => {
-                Fuse::new(args, &config, pool)?.execute();
+                Fuse::new(args, pool, Pgp::new(&config)?, store::new(&config)?)?.execute();
                 Ok(())
             }
             Some((cmd, _)) => Err(Error::new(&format!("Invalid command: {}", cmd))),

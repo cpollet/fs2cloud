@@ -2,10 +2,8 @@ use crate::chunks_repository::ChunksRepository;
 use crate::error::Error;
 use crate::files_repository::FilesRepository;
 use crate::fs_repository::{FsRepository, Inode};
-use crate::pgp::{Pgp, PgpConfig};
-use crate::store::local::Local;
-use crate::store::log::Log;
-use crate::store::{CloudStore, StoreConfig, StoreKind};
+use crate::pgp::Pgp;
+use crate::store::CloudStore;
 use clap::{Arg, ArgMatches, Command};
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
@@ -30,8 +28,6 @@ pub struct Fuse {
     store: Arc<Box<dyn CloudStore>>,
 }
 
-pub trait FuseConfig: StoreConfig + PgpConfig {}
-
 impl Fuse {
     pub fn cli() -> Command<'static> {
         Command::new(CMD).about("Mount database as fuse FS").arg(
@@ -47,38 +43,16 @@ impl Fuse {
 
     pub fn new(
         args: &ArgMatches,
-        config: &dyn FuseConfig,
         pool: Pool<SqliteConnectionManager>,
+        pgp: Pgp,
+        store: Box<dyn CloudStore>,
     ) -> Result<Self, Error> {
         Ok(Self {
             mountpoint: PathBuf::from(args.value_of("mountpoint").unwrap()),
             pool,
-            pgp: Arc::new(Self::pgp(config)?),
-            store: Arc::new(Self::store(config)?),
+            pgp: Arc::new(pgp),
+            store: Arc::new(store),
         })
-    }
-
-    fn pgp(config: &dyn FuseConfig) -> Result<Pgp, Error> {
-        let pub_key_file = config.get_pgp_key()?;
-        let ascii_armor = config.get_pgp_armor();
-        let passphrase = config.get_pgp_passphrase();
-
-        Pgp::new(pub_key_file, passphrase, ascii_armor).map_err(|e| {
-            Error::new(&format!(
-                "Error configuring pgp with public key file {}: {}",
-                pub_key_file, e
-            ))
-        })
-    }
-
-    fn store(config: &dyn FuseConfig) -> Result<Box<dyn CloudStore>, Error> {
-        let store = config.get_store_type();
-        match store {
-            Ok(StoreKind::Log) => Ok(Box::new(Log::new())),
-            Ok(StoreKind::S3) => Err(Error::new("S3 is not supported")),
-            Ok(StoreKind::Local) => Ok(Box::new(Local::new(config.get_local_store_path()?)?)),
-            Err(e) => Err(e),
-        }
     }
 
     pub fn execute(&self) {

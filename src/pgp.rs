@@ -30,17 +30,16 @@ pub trait PgpConfig {
 }
 
 impl Pgp {
-    pub fn new(
-        cert_file: &str,
-        passphrase: Option<&str>,
-        ascii_armor: bool,
-    ) -> Result<Self, Error> {
-        log::debug!("Reading key from {}", cert_file);
+    pub fn new(config: &dyn PgpConfig) -> Result<Self, Error> {
+        Self::new_internal(config).map_err(|e| Error::new(&format!("Error configuring PGP: {}", e)))
+    }
+
+    fn new_internal(config: &dyn PgpConfig) -> Result<Self, Error> {
         let policy = StandardPolicy::new();
         let mode = KeyFlags::empty()
             .set_transport_encryption()
             .set_storage_encryption();
-        let cert = Cert::from_file(cert_file).map_err(Error::from)?;
+        let cert = Cert::from_file(config.get_pgp_key()?).map_err(Error::from)?;
         let cert = cert.with_policy(&policy, None).map_err(Error::from)?;
 
         let mut public_keys = HashMap::new();
@@ -52,6 +51,7 @@ impl Pgp {
             .revoked(false)
             .key_flags(&mode)
         {
+            let passphrase = config.get_pgp_passphrase();
             // todo refactor this
             if key.has_secret() && passphrase.is_some() {
                 log::trace!("Key has secret part");
@@ -89,7 +89,7 @@ impl Pgp {
             Ok(Pgp {
                 public_keys,
                 secret_keys,
-                ascii_armor,
+                ascii_armor: config.get_pgp_armor(),
                 policy: Box::new(policy),
             })
         }

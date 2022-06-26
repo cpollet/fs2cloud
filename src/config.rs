@@ -1,7 +1,5 @@
 use crate::database::DatabaseConfig;
-use crate::fuse::FuseConfig;
 use crate::pgp::PgpConfig;
-use crate::pull::PullConfig;
 use crate::push::PushConfig;
 use crate::store::{StoreConfig, StoreKind};
 use crate::Error;
@@ -132,7 +130,3 @@ impl StoreConfig for Config {
         })
     }
 }
-
-impl PullConfig for Config {}
-
-impl FuseConfig for Config {}

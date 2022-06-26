@@ -15,11 +15,8 @@ use crate::chunks_repository::ChunksRepository;
 use crate::error::Error;
 use crate::files_repository::{File, FilesRepository};
 use crate::fs_repository::FsRepository;
-use crate::pgp::{Pgp, PgpConfig};
-use crate::store::local::Local;
-use crate::store::log::Log;
-use crate::store::s3::S3;
-use crate::store::{CloudStore, StoreConfig, StoreKind};
+use crate::pgp::Pgp;
+use crate::store::CloudStore;
 
 pub struct Push {
     folder: PathBuf,
@@ -31,7 +28,7 @@ pub struct Push {
     store: Box<dyn CloudStore>,
 }
 
-pub trait PushConfig: PgpConfig + StoreConfig {
+pub trait PushConfig {
     fn get_chunk_size(&self) -> Byte;
 }
 
@@ -54,6 +51,8 @@ impl Push {
         args: &ArgMatches,
         config: &dyn PushConfig,
         pool: Pool<SqliteConnectionManager>,
+        pgp: Pgp,
+        store: Box<dyn CloudStore>,
     ) -> Result<Self, Error> {
         Ok(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
@@ -61,43 +60,9 @@ impl Push {
             chunks_repository: ChunksRepository::new(pool.clone()),
             fs_repository: FsRepository::new(pool),
             chunk_size: config.get_chunk_size(),
-            pgp: Self::pgp(config)?,
-            store: Self::store(config)?,
+            pgp,
+            store,
         })
-    }
-
-    fn pgp(config: &dyn PushConfig) -> Result<Pgp, Error> {
-        let pub_key_file = config.get_pgp_key()?;
-        let ascii_armor = config.get_pgp_armor();
-
-        Pgp::new(pub_key_file, None, ascii_armor).map_err(|e| {
-            Error::new(&format!(
-                "Error configuring pgp with public key file {}: {}",
-                pub_key_file, e
-            ))
-        })
-    }
-
-    fn store(config: &dyn PushConfig) -> Result<Box<dyn CloudStore>, Error> {
-        let store = config.get_store_type();
-        match store {
-            Ok(StoreKind::Log) => Ok(Box::new(Log::new())),
-            Ok(StoreKind::S3) => Self::s3(config),
-            Ok(StoreKind::Local) => Ok(Box::new(Local::new(config.get_local_store_path()?)?)),
-            Err(e) => Err(e),
-        }
-    }
-
-    fn s3(config: &dyn PushConfig) -> Result<Box<dyn CloudStore>, Error> {
-        match S3::new(
-            config.get_s3_region()?,
-            config.get_s3_bucket()?,
-            config.get_s3_access_key(),
-            config.get_s3_secret_key(),
-        ) {
-            Ok(s3) => Ok(Box::from(s3)),
-            Err(e) => Err(Error::new(&format!("Error configuring S3: {}", e))),
-        }
     }
 
     pub fn execute(&self) {

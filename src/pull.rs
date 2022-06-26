@@ -6,14 +6,8 @@ pub struct Pull {}
 
 pub const CMD: &str = "pull";
 
-pub trait PullConfig {}
-
 impl Pull {
-    pub fn new(
-        _args: &ArgMatches,
-        _config: &dyn PullConfig,
-        _pool: Pool<SqliteConnectionManager>,
-    ) -> Pull {
+    pub fn new(_args: &ArgMatches, _pool: Pool<SqliteConnectionManager>) -> Pull {
         Pull {}
     }
 
