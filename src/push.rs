@@ -1,10 +1,10 @@
 use byte_unit::Byte;
+use std::fs;
 use std::fs::{DirEntry, Metadata, ReadDir};
-use std::io::{BufReader, Write};
+use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::{fs, io};
 
-use crate::chunk_buf_reader::ChunkBufReader;
+use crate::chunk_buf_reader::ChunkReader;
 use clap::{Arg, ArgMatches, Command};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -165,10 +165,7 @@ impl Push {
     }
 
     fn process_file(&self, file: File) -> Result<File, Error> {
-        let path = PathBuf::from(&self.folder).join(PathBuf::from(&file.path));
-        let reader = BufReader::new(fs::File::open(path.as_path()).unwrap());
-
-        match self.process_chunks(&file, reader) {
+        match self.process_chunks(&file) {
             Ok(_) => {
                 self.files_repository.mark_done(file.uuid)?;
                 Ok(file)
@@ -177,9 +174,14 @@ impl Push {
         }
     }
 
-    fn process_chunks(&self, file: &File, mut reader: BufReader<fs::File>) -> Result<(), Error> {
-        let mut chunk_idx: u64 = 0;
+    fn process_chunks(&self, file: &File) -> Result<(), Error> {
+        let mut reader = BufReader::new(fs::File::open(
+            PathBuf::from(&self.folder)
+                .join(PathBuf::from(&file.path))
+                .as_path(),
+        )?);
         let mut writer = Vec::with_capacity(self.chunk_size.get_bytes() as usize);
+        let mut chunk_idx: u64 = 0;
         loop {
             writer.clear();
             match self.process_chunk(file, &mut reader, &mut writer, chunk_idx) {
@@ -192,17 +194,17 @@ impl Push {
 
     /// Processes a chunk, returning a `Result<bool, Error>` telling whether there is a next chunk
     /// one or not.
-    fn process_chunk(
+    fn process_chunk<R: Read>(
         &self,
         file: &File,
-        reader: &mut BufReader<fs::File>,
+        reader: &mut R,
         writer: &mut Vec<u8>,
         idx: u64,
     ) -> Result<bool, Error> {
         let uuid = Uuid::new_v4();
         log::info!("{} / chunk {}: uuid {}", file.path, idx, uuid);
 
-        let mut reader = ChunkBufReader::new(reader, self.chunk_size.get_bytes() as usize);
+        let mut reader = ChunkReader::new(reader, self.chunk_size.get_bytes() as usize);
 
         match self.pgp.encrypt(&mut reader, writer) {
             Err(e) => Err(Error::new(

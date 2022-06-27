@@ -1,13 +1,13 @@
 use std::io;
-use std::io::{BufReader, Read};
+use std::io::Read;
 
-pub struct ChunkBufReader<'t, R> {
-    reader: &'t mut BufReader<R>,
+pub struct ChunkReader<'t, R: Read> {
+    reader: &'t mut R,
     bytes_left: usize,
 }
-impl<'t, R: Read> ChunkBufReader<'t, R> {
-    pub fn new(reader: &'t mut BufReader<R>, bytes_left: usize) -> ChunkBufReader<R> {
-        ChunkBufReader { reader, bytes_left }
+impl<'t, R: Read> ChunkReader<'t, R> {
+    pub fn new(reader: &'t mut R, bytes_left: usize) -> ChunkReader<R> {
+        ChunkReader { reader, bytes_left }
     }
 
     pub fn read_full_chunk(&self) -> bool {
@@ -15,7 +15,7 @@ impl<'t, R: Read> ChunkBufReader<'t, R> {
     }
 }
 
-impl<R: Read> Read for ChunkBufReader<'_, R> {
+impl<R: Read> Read for ChunkReader<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let bytes_to_read = buf.len().min(self.bytes_left);
         let mut inner_buf = vec![0; bytes_to_read];
