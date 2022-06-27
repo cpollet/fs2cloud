@@ -65,7 +65,7 @@ impl Push {
     }
 
     pub fn execute(&self) {
-        println!("Processing files in `{}`:", self.folder.display(),);
+        log::info!("Processing files in `{}`...", self.folder.display(),);
         match fs::read_dir(&self.folder).map_err(Error::from) {
             Err(e) => {
                 self.print_err(&self.folder, e);
@@ -74,7 +74,7 @@ impl Push {
             Ok(dir) => self.visit_dir(&self.folder, dir),
         }
 
-        println!("Reprocessing pending files from database");
+        log::info!("Reprocessing pending files from database...");
         match self.files_repository.list_by_status("PENDING") {
             Err(e) => self.print_err(&self.folder, e),
             Ok(files) => {
@@ -83,7 +83,7 @@ impl Push {
                     if let Err(e) = self.process_file(file) {
                         self.print_err(Path::new(&file_path), e)
                     } else {
-                        println!("  file {} done", file_path);
+                        log::info!("  file {} done", file_path);
                     }
                 }
             }
@@ -114,10 +114,10 @@ impl Push {
                 Ok(dir) => self.visit_dir(&path, dir),
             },
             Ok(metadata) if metadata.is_symlink() => {
-                println!("Not following symlink {}", path.display());
+                log::info!("Not following symlink {}", path.display());
             }
             Ok(_) => {
-                println!("Type of {} unknown, skipping", path.display())
+                log::info!("Type of {} unknown, skipping", path.display())
             }
         }
     }
@@ -134,21 +134,19 @@ impl Push {
         let db_file = self.files_repository.find_by_path(local_path.as_path());
         match db_file {
             Err(e) => self.print_err(&file.path(), e),
-            Ok(Some(_)) => println!("  {}: skip metadata", local_path.display()),
+            Ok(Some(_)) => log::info!("{}: skip metadata", local_path.display()),
             Ok(None) => {
-                println!("  {}", local_path.display());
                 let uuid = Uuid::new_v4();
-                println!("    uuid      {}", uuid);
-                println!(
-                    "    size      {}",
-                    Byte::from_bytes(metadata.len() as u128).get_appropriate_unit(false)
+                log::info!(
+                    "{}: size {}; uuid {}",
+                    local_path.display(),
+                    Byte::from_bytes(metadata.len() as u128).get_appropriate_unit(false),
+                    uuid,
                 );
-                print!("    sha256    ");
-                io::stdout().flush().unwrap();
                 if let Err(e) = sha256::digest_file(file.path())
                     .map_err(Error::from)
                     .and_then(|sha256| {
-                        println!("{}", sha256);
+                        log::info!("  sha256 {}", sha256);
                         self.files_repository.insert(
                             local_path.display().to_string(),
                             sha256,
@@ -160,7 +158,7 @@ impl Push {
                 {
                     self.print_err(&file.path(), e)
                 } else {
-                    println!("  file {} done", &file.path().display());
+                    log::info!("{} done", &file.path().display());
                 }
             }
         }
@@ -201,11 +199,8 @@ impl Push {
         writer: &mut Vec<u8>,
         idx: u64,
     ) -> Result<bool, Error> {
-        println!("    chunk {}", idx);
         let uuid = Uuid::new_v4();
-        println!("      uuid    {}", uuid);
-        print!("      size    ");
-        io::stdout().flush().unwrap();
+        log::info!("{} / chunk {}: uuid {}", file.path, idx, uuid);
 
         let mut reader = ChunkBufReader::new(reader, self.chunk_size.get_bytes() as usize);
 
@@ -214,21 +209,19 @@ impl Push {
                 format!("Unable to process chunk {}: {}", idx, e).as_str(),
             )),
             Ok(0) => {
-                println!("0 -> 0 (discarded)");
+                log::info!("      empty -> discarded");
                 Ok(false) // we read 0 bytes => nothing left to read
             }
             Ok(payload_size) => {
                 let size = writer.len();
-                println!(
-                    "{} -> {}",
+                log::info!(
+                    "  payload {}; size {}",
                     Byte::from_bytes(payload_size as u128).get_appropriate_unit(false),
                     Byte::from_bytes(size as u128).get_appropriate_unit(false),
                 );
 
-                print!("      sha256  ");
-                io::stdout().flush().unwrap();
                 let sha256 = sha256::digest_bytes(writer.as_slice());
-                println!("{}", sha256);
+                log::info!("  sha256 {}", sha256);
 
                 let chunk = self
                     .chunks_repository
