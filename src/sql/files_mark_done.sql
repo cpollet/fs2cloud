@@ -1,1 +1,1 @@
-update files set status='DONE' where uuid=:uuid
+update files set status='DONE', sha256=:sha256 where uuid=:uuid

@@ -1,18 +1,18 @@
 use byte_unit::Byte;
 use std::fs;
-use std::fs::{DirEntry, Metadata, ReadDir};
-use std::io::{BufReader, Read};
+use std::fs::{Metadata, ReadDir};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use crate::chunk_buf_reader::ChunkReader;
 use clap::{Arg, ArgMatches, Command};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::chunks_repository::ChunksRepository;
 use crate::error::Error;
-use crate::files_repository::{File, FilesRepository};
+use crate::files_repository::FilesRepository;
 use crate::fs_repository::FsRepository;
 use crate::pgp::Pgp;
 use crate::store::CloudStore;
@@ -67,180 +67,192 @@ impl Push {
     pub fn execute(&self) {
         log::info!("Processing files in `{}`...", self.folder.display(),);
         match fs::read_dir(&self.folder).map_err(Error::from) {
-            Err(e) => {
-                self.print_err(&self.folder, e);
-                return;
-            }
+            Err(e) => log::error!("{}: error: {}", self.folder.display(), e),
             Ok(dir) => self.visit_dir(&self.folder, dir),
         }
 
         log::info!("Reprocessing pending files from database...");
         match self.files_repository.list_by_status("PENDING") {
-            Err(e) => self.print_err(&self.folder, e),
+            Err(e) => log::error!("{}: error: {}", self.folder.display(), e),
             Ok(files) => {
                 for file in files {
-                    let file_path = file.path.clone();
-                    if let Err(e) = self.process_file(file) {
-                        self.print_err(Path::new(&file_path), e)
-                    } else {
-                        log::info!("  file {} done", file_path);
-                    }
+                    self.visit_path(PathBuf::from(&self.folder).join(PathBuf::from(&file.path)));
                 }
             }
         };
-    }
-
-    fn print_err(&self, path: &Path, e: Error) {
-        eprintln!("Error on {}: {}", path.display(), e)
     }
 
     fn visit_dir(&self, path: &Path, dir: ReadDir) {
         for file in dir {
-            match file.map_err(Error::from) {
-                Err(e) => self.print_err(path, e),
-                Ok(entry) => self.visit_dir_entry(entry),
+            match file {
+                Err(e) => log::error!("{}: error: {}", path.display(), e),
+                Ok(entry) => self.visit_path(entry.path()),
             }
         }
     }
 
-    fn visit_dir_entry(&self, entry: DirEntry) {
-        let path = entry.path();
-
-        match fs::metadata(&path).map_err(Error::from) {
-            Err(e) => self.print_err(&path, e),
-            Ok(metadata) if metadata.is_file() => self.visit_file(entry, metadata),
-            Ok(metadata) if metadata.is_dir() => match path.read_dir().map_err(Error::from) {
-                Err(e) => self.print_err(&path, e),
+    fn visit_path(&self, path: PathBuf) {
+        match fs::metadata(&path) {
+            Err(e) => log::error!("{}: error: {}", path.display(), e),
+            Ok(metadata) if metadata.is_file() => self.visit_file(path, metadata),
+            Ok(metadata) if metadata.is_dir() => match path.read_dir() {
+                Err(e) => log::error!("{}: error: {}", path.display(), e),
                 Ok(dir) => self.visit_dir(&path, dir),
             },
             Ok(metadata) if metadata.is_symlink() => {
-                log::info!("Not following symlink {}", path.display());
+                log::info!("{}: symlink; skipping", path.display())
             }
-            Ok(_) => {
-                log::info!("Type of {} unknown, skipping", path.display())
-            }
+            Ok(_) => log::info!("{}: unknown type; skipping", path.display()),
         }
     }
 
-    fn visit_file(&self, file: DirEntry, metadata: Metadata) {
-        let local_path = match file.path().strip_prefix(&self.folder) {
-            Err(e) => {
-                self.print_err(&file.path(), e.into());
-                return;
-            }
+    fn visit_file(&self, path: PathBuf, metadata: Metadata) {
+        let local_path = match path.strip_prefix(&self.folder) {
+            Err(e) => panic!("{}", e),
             Ok(path) => path.to_owned(),
         };
 
-        let db_file = self.files_repository.find_by_path(local_path.as_path());
-        match db_file {
-            Err(e) => self.print_err(&file.path(), e),
-            Ok(Some(_)) => log::info!("{}: skip metadata", local_path.display()),
+        let db_file = match self.files_repository.find_by_path(local_path.as_path()) {
+            Err(e) => {
+                log::error!("{}: error: {}", path.display(), e);
+                return;
+            }
+            Ok(Some(_)) => todo!("need to implement file reprocessing"),
             Ok(None) => {
-                let uuid = Uuid::new_v4();
-                log::info!(
-                    "{}: size {}; uuid {}",
-                    local_path.display(),
-                    Byte::from_bytes(metadata.len() as u128).get_appropriate_unit(false),
-                    uuid,
-                );
-                if let Err(e) = sha256::digest_file(file.path())
-                    .map_err(Error::from)
-                    .and_then(|sha256| {
-                        log::info!("  sha256 {}", sha256);
-                        self.files_repository.insert(
-                            local_path.display().to_string(),
-                            sha256,
-                            metadata.len() as usize,
-                        )
-                    })
-                    .and_then(|f| self.process_file(f))
-                    .and_then(|f| crate::fs::insert(&f.uuid, &local_path, &self.fs_repository))
-                {
-                    self.print_err(&file.path(), e)
-                } else {
-                    log::info!("{} done", &file.path().display());
+                match self.files_repository.insert(
+                    local_path.display().to_string(),
+                    "".into(),
+                    metadata.len() as usize,
+                ) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        log::error!("Unable to insert file {}: {}", path.display(), e);
+                        return;
+                    }
                 }
             }
-        }
-    }
+        };
 
-    fn process_file(&self, file: File) -> Result<File, Error> {
-        match self.process_chunks(&file) {
-            Ok(_) => {
-                self.files_repository.mark_done(file.uuid)?;
-                Ok(file)
+        log::info!(
+            "{}: size {}; uuid {}",
+            local_path.display(),
+            Byte::from_bytes(metadata.len() as u128).get_appropriate_unit(false),
+            db_file.uuid,
+        );
+
+        let source = match fs::File::open(&path) {
+            Ok(read) => read,
+            Err(e) => {
+                log::error!("Unable to open {}: {}", path.display(), e);
+                return;
             }
-            Err(e) => Err(e),
-        }
-    }
+        };
+        let chunked_file = ChunkedFile::new(source, self.chunk_size.get_bytes() as usize);
+        let mut sha256 = Sha256::new();
+        let mut writer = Vec::<u8>::with_capacity(self.chunk_size.get_bytes() as usize);
+        for (chunk_index, chunk) in chunked_file.into_iter().enumerate() {
+            let clear_chunk = match chunk {
+                Ok(chunk) => chunk,
+                Err(e) => {
+                    log::error!("Unable to read from {}: {}", path.display(), e);
+                    return;
+                }
+            };
+            sha256.update(clear_chunk.data.as_slice());
 
-    fn process_chunks(&self, file: &File) -> Result<(), Error> {
-        let mut reader = BufReader::new(fs::File::open(
-            PathBuf::from(&self.folder)
-                .join(PathBuf::from(&file.path))
-                .as_path(),
-        )?);
-        let mut writer = Vec::with_capacity(self.chunk_size.get_bytes() as usize);
-        let mut chunk_idx: u64 = 0;
-        loop {
             writer.clear();
-            match self.process_chunk(file, &mut reader, &mut writer, chunk_idx) {
-                Ok(true) => chunk_idx += 1,
-                Ok(false) => return Ok(()),
-                Err(e) => return Err(e),
+            let cipher_chunk = match self
+                .pgp
+                .encrypt(&mut clear_chunk.data.as_slice(), &mut writer)
+            {
+                Err(e) => {
+                    log::error!("Unable to encrypt chunk {}: {}", chunk_index, e);
+                    return;
+                }
+                Ok(payload_size) => Chunk {
+                    data: writer.as_slice().into(),
+                    sha256: sha256::digest_bytes(writer.as_slice()),
+                    size: writer.len(),
+                    payload_size,
+                },
+            };
+
+            let uuid = Uuid::new_v4();
+            log::info!(
+                "{} / chunk {}: uuid {}; payload {}; size {}",
+                path.display(),
+                chunk_index,
+                uuid,
+                Byte::from_bytes(cipher_chunk.payload_size as u128).get_appropriate_unit(false),
+                Byte::from_bytes(cipher_chunk.size as u128).get_appropriate_unit(false)
+            );
+
+            if let Err(e) = self.chunks_repository.insert(
+                uuid,
+                &db_file,
+                chunk_index as u64,
+                cipher_chunk.sha256,
+                cipher_chunk.size,
+                cipher_chunk.payload_size,
+            ) {
+                log::error!("Unable to persist chunk {}: {}", chunk_index, e);
+                return;
+            }
+            if let Err(e) = self.store.put(uuid, cipher_chunk.data.as_slice()) {
+                log::error!("Unable to upload chunk {}: {}", chunk_index, e);
+                return;
+            };
+            if let Err(e) = self.chunks_repository.mark_done(uuid) {
+                log::error!("Unable to finalize chunk {}: {}", chunk_index, e);
+                return;
             }
         }
+
+        let sha256 = sha256.finalize();
+        let sha256 = format!("{:x}", sha256);
+        if let Err(e) = self.files_repository.mark_done(&db_file.uuid, sha256) {
+            log::error!("{}: unable to finalize: {}", path.display(), e);
+        }
+        if let Err(e) = crate::fs::insert(&db_file.uuid, &local_path, &self.fs_repository) {
+            log::error!("{}: unable to update fuse data: {}", path.display(), e);
+        }
+
+        log::info!("Done {}", path.display());
     }
+}
 
-    /// Processes a chunk, returning a `Result<bool, Error>` telling whether there is a next chunk
-    /// one or not.
-    fn process_chunk<R: Read>(
-        &self,
-        file: &File,
-        reader: &mut R,
-        writer: &mut Vec<u8>,
-        idx: u64,
-    ) -> Result<bool, Error> {
-        let uuid = Uuid::new_v4();
-        log::info!("{} / chunk {}: uuid {}", file.path, idx, uuid);
+struct ChunkedFile<T: Read> {
+    source: T,
+    chunk_size: usize,
+}
 
-        let mut reader = ChunkReader::new(reader, self.chunk_size.get_bytes() as usize);
+impl<T: Read> ChunkedFile<T> {
+    fn new(source: T, chunk_size: usize) -> Self {
+        Self { source, chunk_size }
+    }
+}
 
-        match self.pgp.encrypt(&mut reader, writer) {
-            Err(e) => Err(Error::new(
-                format!("Unable to process chunk {}: {}", idx, e).as_str(),
-            )),
-            Ok(0) => {
-                log::info!("      empty -> discarded");
-                Ok(false) // we read 0 bytes => nothing left to read
-            }
-            Ok(payload_size) => {
-                let size = writer.len();
-                log::info!(
-                    "  payload {}; size {}",
-                    Byte::from_bytes(payload_size as u128).get_appropriate_unit(false),
-                    Byte::from_bytes(size as u128).get_appropriate_unit(false),
-                );
+impl<T: Read> Iterator for ChunkedFile<T> {
+    type Item = Result<Chunk, Error>;
 
-                let sha256 = sha256::digest_bytes(writer.as_slice());
-                log::info!("  sha256 {}", sha256);
-
-                let chunk = self
-                    .chunks_repository
-                    .insert(uuid, file, idx, sha256, size, payload_size)
-                    .map_err(|e| {
-                        Error::new(format!("Unable to persist chunk {}: {}", idx, e).as_str())
-                    })?;
-
-                self.store.put(chunk.uuid, writer.as_slice()).map_err(|e| {
-                    Error::new(format!("Unable to upload chunk {}: {}", idx, e).as_str())
-                })?;
-
-                self.chunks_repository.mark_done(chunk.uuid)?;
-
-                // keep going if we were able to read a full chunk
-                Ok(reader.read_full_chunk())
-            }
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut buffer = vec![0; self.chunk_size];
+        match self.source.read(buffer.as_mut_slice()) {
+            Ok(0) => None,
+            Ok(bytes) => Some(Ok(Chunk {
+                sha256: sha256::digest_bytes(buffer.as_slice()),
+                size: bytes,
+                payload_size: bytes,
+                data: buffer,
+            })),
+            Err(e) => Some(Err(Error::from(e))),
         }
     }
+}
+
+struct Chunk {
+    sha256: String,
+    size: usize,
+    payload_size: usize,
+    data: Vec<u8>,
 }

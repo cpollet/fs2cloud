@@ -98,12 +98,15 @@ impl FilesRepository {
             .map_err(Error::from)
     }
 
-    pub fn mark_done(&self, uuid: Uuid) -> Result<(), Error> {
-        self.pool.get().map_err(Error::from)?.execute(
+    pub fn mark_done(&self, uuid: &Uuid, sha256: String) -> Result<(), Error> {
+        match self.pool.get()?.execute(
             include_str!("sql/files_mark_done.sql"),
-            &[(":uuid", &uuid.to_string())],
-        );
-        Ok(()) // fixme
+            &[(":uuid", &uuid.to_string()), (":sha256", &sha256)],
+        ) {
+            Ok(0) => Err(Error::new(&format!("File {} not found in DB", uuid))),
+            Ok(_) => Ok(()),
+            Err(e) => Err(Error::from(e)),
+        }
     }
 
     pub fn list_all(&self) -> Result<Vec<File>, Error> {

@@ -10,7 +10,6 @@ use crate::pgp::Pgp;
 use crate::pull::Pull;
 use crate::push::{Push, PushConfig};
 
-mod chunk_buf_reader;
 mod chunks_repository;
 mod config;
 mod database;

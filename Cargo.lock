@@ -560,6 +560,7 @@ dependencies = [
  "sequoia-openpgp",
  "serde",
  "serde_json",
+ "sha2 0.10.2",
  "sha256",
  "signal-hook",
  "time",
