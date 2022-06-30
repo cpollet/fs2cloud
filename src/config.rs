@@ -2,6 +2,7 @@ use crate::database::DatabaseConfig;
 use crate::pgp::PgpConfig;
 use crate::push::PushConfig;
 use crate::store::{StoreConfig, StoreKind};
+use crate::thread_pool::ThreadPoolConfig;
 use crate::Error;
 use byte_unit::Byte;
 use std::fs;
@@ -78,6 +79,16 @@ impl PgpConfig for Config {
 
     fn get_pgp_passphrase(&self) -> Option<&str> {
         self.yaml["pgp"]["passphrase"].as_str()
+    }
+}
+
+impl ThreadPoolConfig for Config {
+    fn get_max_workers_count(&self) -> usize {
+        self.yaml["workers"].as_i64().unwrap_or_default().max(1) as usize
+    }
+
+    fn get_max_queue_size(&self) -> usize {
+        self.yaml["queue_size"].as_i64().unwrap_or_default().max(0) as usize
     }
 }
 

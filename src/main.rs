@@ -9,6 +9,7 @@ use crate::opts::parse;
 use crate::pgp::Pgp;
 use crate::pull::Pull;
 use crate::push::{Push, PushConfig};
+use crate::thread_pool::ThreadPool;
 
 mod chunks_repository;
 mod config;
@@ -24,6 +25,7 @@ mod pgp;
 mod pull;
 mod push;
 mod store;
+mod thread_pool;
 
 fn main() {
     std::process::exit(match run() {
@@ -55,6 +57,7 @@ fn run() -> Result<(), Error> {
                     pool,
                     Pgp::new(&config)?,
                     store::new(&config)?,
+                    ThreadPool::new(&config),
                 )?
                 .execute();
                 Ok(())

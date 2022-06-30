@@ -150,7 +150,7 @@ pub mod import {
                     for chunk in file.chunks.as_slice() {
                         if let Err(e) = self.chunks_repository.insert(
                             Uuid::parse_str(&chunk.uuid).unwrap(),
-                            &db_file,
+                            db_file.uuid,
                             chunk.idx,
                             chunk.sha256.clone(),
                             chunk.size,

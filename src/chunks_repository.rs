@@ -1,5 +1,4 @@
 use crate::error::Error;
-use crate::files_repository::File;
 use fallible_iterator::FallibleIterator;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -43,7 +42,7 @@ impl ChunksRepository {
     pub fn insert(
         &self,
         uuid: Uuid,
-        file: &File,
+        file_uuid: Uuid,
         idx: u64,
         sha256: String,
         size: usize,
@@ -51,7 +50,7 @@ impl ChunksRepository {
     ) -> Result<Chunk, Error> {
         let chunk = Chunk {
             uuid,
-            file_uuid: file.uuid,
+            file_uuid,
             idx,
             sha256,
             size,

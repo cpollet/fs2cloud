@@ -3,6 +3,7 @@ use std::fs;
 use std::fs::{Metadata, ReadDir};
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use clap::{Arg, ArgMatches, Command};
 use r2d2::Pool;
@@ -16,15 +17,17 @@ use crate::files_repository::FilesRepository;
 use crate::fs_repository::FsRepository;
 use crate::pgp::Pgp;
 use crate::store::CloudStore;
+use crate::thread_pool::ThreadPool;
 
 pub struct Push {
     folder: PathBuf,
     files_repository: FilesRepository,
-    chunks_repository: ChunksRepository,
+    chunks_repository: Arc<ChunksRepository>,
     fs_repository: FsRepository,
     chunk_size: Byte,
-    pgp: Pgp,
-    store: Box<dyn CloudStore>,
+    pgp: Arc<Pgp>,
+    store: Arc<Box<dyn CloudStore>>,
+    thread_pool: ThreadPool,
 }
 
 pub trait PushConfig {
@@ -52,15 +55,17 @@ impl Push {
         pool: Pool<SqliteConnectionManager>,
         pgp: Pgp,
         store: Box<dyn CloudStore>,
+        thread_pool: ThreadPool,
     ) -> Result<Self, Error> {
         Ok(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
             files_repository: FilesRepository::new(pool.clone()),
-            chunks_repository: ChunksRepository::new(pool.clone()),
+            chunks_repository: Arc::new(ChunksRepository::new(pool.clone())),
             fs_repository: FsRepository::new(pool),
             chunk_size: config.get_chunk_size(),
-            pgp,
-            store,
+            pgp: Arc::new(pgp),
+            store: Arc::new(store),
+            thread_pool,
         })
     }
 
@@ -149,7 +154,6 @@ impl Push {
         };
         let chunked_file = ChunkedFile::new(source, self.chunk_size.get_bytes() as usize);
         let mut sha256 = Sha256::new();
-        let mut writer = Vec::<u8>::with_capacity(self.chunk_size.get_bytes() as usize);
         for (chunk_index, chunk) in chunked_file.into_iter().enumerate() {
             let clear_chunk = match chunk {
                 Ok(chunk) => chunk,
@@ -160,52 +164,53 @@ impl Push {
             };
             sha256.update(clear_chunk.data.as_slice());
 
-            writer.clear();
-            let cipher_chunk = match self
-                .pgp
-                .encrypt(&mut clear_chunk.data.as_slice(), &mut writer)
-            {
-                Err(e) => {
-                    log::error!("Unable to encrypt chunk {}: {}", chunk_index, e);
-                    return;
+            let chunk_size = self.chunk_size;
+            let path = path.clone();
+            let file_uuid = db_file.uuid;
+            let pgp = self.pgp.clone();
+            let chunks_repository = self.chunks_repository.clone();
+            let store = self.store.clone();
+            self.thread_pool.execute(move || {
+                let mut writer = Vec::<u8>::with_capacity(chunk_size.get_bytes() as usize);
+                let cipher_chunk = match pgp.encrypt(&mut clear_chunk.data.as_slice(), &mut writer)
+                {
+                    Err(e) => {
+                        log::error!("Unable to encrypt chunk {}: {}", chunk_index, e);
+                        return;
+                    }
+                    Ok(payload_size) => Chunk {
+                        data: writer.as_slice().into(),
+                        sha256: sha256::digest_bytes(writer.as_slice()),
+                        size: writer.len(),
+                        payload_size,
+                    },
+                };
+
+                let uuid = Uuid::new_v4();
+                log::info!(
+                    "{} / chunk {}: uuid {}; payload {}; size {}",
+                    path.display(),
+                    chunk_index,
+                    uuid,
+                    Byte::from_bytes(cipher_chunk.payload_size as u128).get_appropriate_unit(false),
+                    Byte::from_bytes(cipher_chunk.size as u128).get_appropriate_unit(false)
+                );
+
+                if let Err(e) = chunks_repository.insert(
+                    uuid,
+                    file_uuid,
+                    chunk_index as u64,
+                    cipher_chunk.sha256,
+                    cipher_chunk.size,
+                    cipher_chunk.payload_size,
+                ) {
+                    log::error!("Unable to persist chunk {}: {}", chunk_index, e);
+                } else if let Err(e) = store.put(uuid, cipher_chunk.data.as_slice()) {
+                    log::error!("Unable to upload chunk {}: {}", chunk_index, e);
+                } else if let Err(e) = chunks_repository.mark_done(uuid) {
+                    log::error!("Unable to finalize chunk {}: {}", chunk_index, e);
                 }
-                Ok(payload_size) => Chunk {
-                    data: writer.as_slice().into(),
-                    sha256: sha256::digest_bytes(writer.as_slice()),
-                    size: writer.len(),
-                    payload_size,
-                },
-            };
-
-            let uuid = Uuid::new_v4();
-            log::info!(
-                "{} / chunk {}: uuid {}; payload {}; size {}",
-                path.display(),
-                chunk_index,
-                uuid,
-                Byte::from_bytes(cipher_chunk.payload_size as u128).get_appropriate_unit(false),
-                Byte::from_bytes(cipher_chunk.size as u128).get_appropriate_unit(false)
-            );
-
-            if let Err(e) = self.chunks_repository.insert(
-                uuid,
-                &db_file,
-                chunk_index as u64,
-                cipher_chunk.sha256,
-                cipher_chunk.size,
-                cipher_chunk.payload_size,
-            ) {
-                log::error!("Unable to persist chunk {}: {}", chunk_index, e);
-                return;
-            }
-            if let Err(e) = self.store.put(uuid, cipher_chunk.data.as_slice()) {
-                log::error!("Unable to upload chunk {}: {}", chunk_index, e);
-                return;
-            };
-            if let Err(e) = self.chunks_repository.mark_done(uuid) {
-                log::error!("Unable to finalize chunk {}: {}", chunk_index, e);
-                return;
-            }
+            });
         }
 
         let sha256 = sha256.finalize();

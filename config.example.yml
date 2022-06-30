@@ -1,5 +1,15 @@
 database: ./database.db3
 
+# total memory consumption is given by `chunks.size * (workers + queue_size)`
+# i.e. 90MB chunks * 8 in progress + 8 in the queue = ~1.5GB RAM
+
+# max amount of worker threads. Valid values: >= 1
+workers: 8
+# max job queue length. With large enough chunks, keeping this value equal
+# to the worker's count maximizes the throughput and minimizes the total RAM
+# consumption. Valid values: >= 0
+queue_size: 8
+
 chunks:
   size: 90MB
 

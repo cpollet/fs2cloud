@@ -554,6 +554,7 @@ dependencies = [
  "pretty_env_logger",
  "r2d2",
  "r2d2_sqlite",
+ "rand 0.8.5",
  "refinery",
  "rusqlite",
  "rust-s3",
