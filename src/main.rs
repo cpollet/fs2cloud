@@ -69,6 +69,7 @@ fn run() -> Result<(), Error> {
             Some((fuse::CMD, args)) => {
                 Fuse::new(
                     args,
+                    &config,
                     pool,
                     Pgp::new(&config)?,
                     store::new(&config)?,

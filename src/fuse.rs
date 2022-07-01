@@ -1,4 +1,4 @@
-use crate::chunks_repository::ChunksRepository;
+use crate::chunks_repository::{Chunk, ChunksRepository};
 use crate::error::Error;
 use crate::files_repository::FilesRepository;
 use crate::fs_repository::{FsRepository, Inode};
@@ -15,19 +15,27 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use signal_hook::iterator::Signals;
 use std::ffi::OsStr;
-use std::io::Cursor;
-use std::path::PathBuf;
+use std::fs;
+use std::fs::OpenOptions;
+use std::io::{Cursor, Read, Write};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
+use uuid::Uuid;
 
 pub const CMD: &str = "fuse";
 
 pub struct Fuse {
+    cache: Option<PathBuf>,
     mountpoint: PathBuf,
     pool: Pool<SqliteConnectionManager>,
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
     chunk_size: Byte,
+}
+
+pub trait FuseConfig {
+    fn get_cache_folder(&self) -> Option<&str>;
 }
 
 impl Fuse {
@@ -45,12 +53,17 @@ impl Fuse {
 
     pub fn new(
         args: &ArgMatches,
+        config: &dyn FuseConfig,
         pool: Pool<SqliteConnectionManager>,
         pgp: Pgp,
         store: Box<dyn CloudStore>,
         chunk_size: Byte,
     ) -> Result<Self, Error> {
+        if let Some(path) = config.get_cache_folder() {
+            fs::create_dir_all(path)?;
+        }
         Ok(Self {
+            cache: config.get_cache_folder().map(PathBuf::from),
             mountpoint: PathBuf::from(args.value_of("mountpoint").unwrap()),
             pool,
             pgp: Arc::new(pgp),
@@ -62,6 +75,7 @@ impl Fuse {
     pub fn execute(&self) {
         let options = vec![MountOption::RO, MountOption::FSName("fs2cloud".to_string())];
         let fs = Fs2CloudFS {
+            cache: self.cache.clone(),
             fs_repository: FsRepository::new(self.pool.clone()),
             files_repository: FilesRepository::new(self.pool.clone()),
             chunks_repository: ChunksRepository::new(self.pool.clone()),
@@ -89,12 +103,58 @@ impl Fuse {
 const TTL: Duration = Duration::from_secs(1);
 
 struct Fs2CloudFS {
+    cache: Option<PathBuf>,
     fs_repository: FsRepository,
     files_repository: FilesRepository,
     chunks_repository: ChunksRepository,
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
     chunk_size: Byte,
+}
+
+impl Fs2CloudFS {
+    fn read_from_store(&self, chunk: &Chunk) -> Result<Vec<u8>, Error> {
+        self.read_from_cache_or_store(&chunk.uuid)
+            .map(Ok)
+            .unwrap_or_else(|| {
+                log::debug!("Read chunk {} from store", chunk.uuid);
+                self.store.get(chunk.uuid).and_then(|cipher_bytes| {
+                    let mut clear_bytes = Vec::with_capacity(chunk.payload_size);
+                    match self
+                        .pgp
+                        .decrypt(Cursor::new(cipher_bytes), &mut clear_bytes)
+                    {
+                        Ok(_) => {
+                            self.write_to_cache(&chunk.uuid, clear_bytes.as_slice());
+                            Ok(clear_bytes)
+                        }
+                        Err(e) => Err(e),
+                    }
+                })
+            })
+    }
+
+    fn read_from_cache_or_store(&self, chunk: &Uuid) -> Option<Vec<u8>> {
+        self.cache
+            .as_ref()
+            .map(|path| path.join(Path::new(&chunk.to_string())))
+            .and_then(|path| OpenOptions::new().read(true).open(path).ok())
+            .and_then(|mut file| {
+                let mut bytes = Vec::new();
+                file.read_to_end(&mut bytes).ok().map(|_| bytes)
+            })
+    }
+
+    fn write_to_cache(&self, chunk: &Uuid, data: &[u8]) {
+        if let Some(mut file) = self
+            .cache
+            .as_ref()
+            .map(|path| path.join(Path::new(&chunk.to_string())))
+            .and_then(|path| OpenOptions::new().create(true).write(true).open(path).ok())
+        {
+            let _ = file.write_all(data);
+        }
+    }
 }
 
 impl Filesystem for Fs2CloudFS {
@@ -209,24 +269,17 @@ impl Filesystem for Fs2CloudFS {
                 break;
             }
 
-            let bytes = match self.store.get(chunk.uuid) {
-                Ok(bytes) => bytes,
+            match self.read_from_store(&chunk) {
+                Ok(bytes) => {
+                    log::trace!("read(ino:{}) -> decrypted {} bytes", ino, bytes.len());
+                    data.write_all(bytes.as_slice()).unwrap()
+                }
                 Err(e) => {
                     log::error!("read(ino:{}) -> error: {}", ino, e);
                     reply.error(ENOENT);
                     return;
                 }
             };
-            match self.pgp.decrypt(Cursor::new(bytes), &mut data) {
-                Ok(bytes) => log::trace!("read(ino:{}) -> decrypted {} bytes", ino, bytes),
-                Err(e) => {
-                    log::error!("read(ino:{}) -> error: {}", ino, e);
-                    reply.error(ENOENT);
-                    return;
-                }
-            }
-
-
 
             if offset > 0 {
                 data.drain(0..offset as usize);

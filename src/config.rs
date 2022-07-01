@@ -1,4 +1,5 @@
 use crate::database::DatabaseConfig;
+use crate::fuse::FuseConfig;
 use crate::pgp::PgpConfig;
 use crate::push::PushConfig;
 use crate::store::{StoreConfig, StoreKind};
@@ -89,6 +90,12 @@ impl ThreadPoolConfig for Config {
 
     fn get_max_queue_size(&self) -> usize {
         self.yaml["queue_size"].as_i64().unwrap_or_default().max(0) as usize
+    }
+}
+
+impl FuseConfig for Config {
+    fn get_cache_folder(&self) -> Option<&str> {
+        self.yaml["cache"].as_str()
     }
 }
 

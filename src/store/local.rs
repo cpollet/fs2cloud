@@ -38,7 +38,7 @@ impl CloudStore for Local {
 
         let mut file = OpenOptions::new().read(true).open(path)?;
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).map_err(Error::from)?;
+        file.read_to_end(&mut bytes)?;
 
         Ok(bytes)
     }
