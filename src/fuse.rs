@@ -225,12 +225,15 @@ impl Filesystem for Fs2CloudFS {
                     return;
                 }
             }
+
+
+
             if offset > 0 {
                 data.drain(0..offset as usize);
                 offset = 0;
             }
         }
-        log::debug!("Read {} bytes (requested: {})", data.len(), size);
+        log::trace!("Read {} bytes (requested: {})", data.len(), size);
         reply.data(&data.as_slice()[0..data.len().min(size as usize)]);
     }
 

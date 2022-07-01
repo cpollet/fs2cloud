@@ -201,6 +201,7 @@ impl Push {
                     file_uuid,
                     chunk_index as u64,
                     cipher_chunk.sha256,
+                    chunk_index * chunk_size.get_bytes() as usize,
                     cipher_chunk.size,
                     cipher_chunk.payload_size,
                 ) {

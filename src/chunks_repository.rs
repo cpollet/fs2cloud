@@ -11,6 +11,7 @@ pub struct Chunk {
     pub file_uuid: Uuid,
     pub idx: u64,
     pub sha256: String,
+    pub offset: usize,
     pub size: usize,
     pub payload_size: usize,
 }
@@ -24,8 +25,9 @@ impl From<&Row<'_>> for Chunk {
             file_uuid: Uuid::parse_str(&file_uuid).unwrap(),
             idx: row.get(2).unwrap(),
             sha256: row.get(3).unwrap(),
-            size: row.get(4).unwrap(),
-            payload_size: row.get(5).unwrap(),
+            offset: row.get(4).unwrap(),
+            size: row.get(5).unwrap(),
+            payload_size: row.get(6).unwrap(),
         }
     }
 }
@@ -45,6 +47,7 @@ impl ChunksRepository {
         file_uuid: Uuid,
         idx: u64,
         sha256: String,
+        offset: usize,
         size: usize,
         payload_size: usize,
     ) -> Result<Chunk, Error> {
@@ -53,6 +56,7 @@ impl ChunksRepository {
             file_uuid,
             idx,
             sha256,
+            offset,
             size,
             payload_size,
         };
@@ -66,6 +70,7 @@ impl ChunksRepository {
                     (":file_uuid", &chunk.file_uuid.to_string()),
                     (":idx", &chunk.idx.to_string()),
                     (":sha256", &chunk.sha256),
+                    (":offset", &chunk.offset.to_string()),
                     (":size", &chunk.size.to_string()),
                     (":payload_size", &chunk.payload_size.to_string()),
                 ],

@@ -7,6 +7,7 @@ struct JsonChunk {
     uuid: String,
     idx: u64,
     sha256: String,
+    offset: usize,
     size: usize,
     payload_size: usize,
 }
@@ -41,6 +42,7 @@ impl From<&Chunk> for JsonChunk {
             uuid: chunk.uuid.to_string(),
             idx: chunk.idx,
             sha256: chunk.sha256.clone(),
+            offset: chunk.offset,
             size: chunk.size,
             payload_size: chunk.payload_size,
         }
@@ -153,6 +155,7 @@ pub mod import {
                             db_file.uuid,
                             chunk.idx,
                             chunk.sha256.clone(),
+                            chunk.offset,
                             chunk.size,
                             chunk.payload_size,
                         ) {
