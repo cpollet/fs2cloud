@@ -80,15 +80,24 @@ impl ChunksRepository {
     }
 
     pub fn mark_done(&self, uuid: &Uuid, sha256: &str, size: u64) -> Result<(), Error> {
-        self.pool.get().map_err(Error::from)?.execute(
-            include_str!("sql/chunks_mark_done.sql"),
-            &[
-                (":uuid", &uuid.to_string()),
-                (":sha256", &sha256.to_string()),
-                (":size", &size.to_string()),
-            ],
-        );
-        Ok(()) // fixme
+        match self
+            .pool
+            .get()
+            .map_err(Error::from)?
+            .execute(
+                include_str!("sql/chunks_mark_done.sql"),
+                &[
+                    (":uuid", &uuid.to_string()),
+                    (":sha256", &sha256.to_string()),
+                    (":size", &size.to_string()),
+                ],
+            )
+            .map_err(Error::from)
+        {
+            Ok(0) => Err(Error::new(&format!("Chunk {} not found in DB", uuid))),
+            Ok(_) => Ok(()),
+            Err(e) => Err(Error::from(e)),
+        }
     }
 
     pub fn find_by_file_uuid(&self, file_uuid: &Uuid) -> Result<Vec<Chunk>, Error> {

@@ -6,20 +6,17 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use clap::{Arg, ArgMatches, Command};
-use log::error;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use sha2::digest::Update;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::chunks_repository::{Chunk, ChunksRepository};
-use crate::error::Error;
 use crate::files_repository::{File, FilesRepository};
 use crate::fs_repository::FsRepository;
 use crate::pgp::Pgp;
 use crate::store::CloudStore;
 use crate::thread_pool::ThreadPool;
+use crate::Error;
 
 pub struct Push {
     folder: PathBuf,
@@ -74,66 +71,88 @@ impl Push {
     pub fn execute(&self) {
         log::info!("Scanning files in `{}`...", self.folder.display(),);
         match fs::read_dir(&self.folder).map_err(Error::from) {
-            Err(e) => log::error!("{}: error: {}", self.folder.display(), e),
+            Err(e) => {
+                log::error!("{}: error: {}", self.folder.display(), e);
+                return;
+            }
             Ok(dir) => self.visit_dir(&self.folder, dir),
         }
 
         log::info!("Processing files from database...");
-        match self.files_repository.list_by_status("PENDING") {
-            Err(e) => log::error!("error loading files: {}", e),
-            Ok(files) => {
-                for file in files {
-                    match self
-                        .chunks_repository
-                        .find_by_file_uuid_and_status(&file.uuid, "PENDING")
-                    {
-                        Err(e) => log::error!("{}: error: {}", file.path, e),
-                        Ok(chunks) => {
-                            let mut path = PathBuf::from(&self.folder);
-                            path.push(&file.path);
-
-                            match fs::File::open(&path) {
-                                Ok(mut source) => {
-                                    for chunk in chunks {
-                                        self.process_chunk(&mut source, &file, &chunk)
-                                    }
-                                }
-                                Err(e) => {
-                                    log::error!("Unable to open {}: {}", file.path, e);
-                                }
-                            };
-                        }
-                    }
-                }
+        let files = match self.files_repository.list_by_status("PENDING") {
+            Err(e) => {
+                log::error!("error loading files: {}", e);
+                return;
             }
+            Ok(files) => files,
         };
+
+        for file in files {
+            let chunks = match self
+                .chunks_repository
+                .find_by_file_uuid_and_status(&file.uuid, "PENDING")
+            {
+                Err(e) => {
+                    log::error!("{}: error: {}", file.path, e);
+                    continue;
+                }
+                Ok(chunks) => chunks,
+            };
+
+            let mut path = PathBuf::from(&self.folder);
+            path.push(&file.path);
+
+            let mut source = match fs::File::open(&path) {
+                Ok(source) => source,
+                Err(e) => {
+                    log::error!("{}: unable to open: {}", file.path, e);
+                    continue;
+                }
+            };
+
+            for chunk in chunks {
+                self.process_chunk(&mut source, &file, &chunk)
+            }
+        }
     }
 
     fn visit_dir(&self, path: &Path, dir: ReadDir) {
         for file in dir {
             match file {
                 Err(e) => log::error!("{}: error: {}", path.display(), e),
-                Ok(entry) => self.visit_path(entry.path()),
+                Ok(entry) => self.visit_path(&entry.path()),
             }
         }
     }
 
-    fn visit_path(&self, path: PathBuf) {
-        match fs::metadata(&path) {
-            Err(e) => log::error!("{}: error: {}", path.display(), e),
-            Ok(metadata) if metadata.is_file() => self.visit_file(path, metadata),
+    fn visit_path(&self, path: &PathBuf) {
+        if let Err(e) = match fs::metadata(&path) {
+            Err(e) => Err(e),
+            Ok(metadata) if metadata.is_file() => {
+                self.visit_file(&path, &metadata);
+                Ok(())
+            }
             Ok(metadata) if metadata.is_dir() => match path.read_dir() {
-                Err(e) => log::error!("{}: error: {}", path.display(), e),
-                Ok(dir) => self.visit_dir(&path, dir),
+                Err(e) => Err(e),
+                Ok(dir) => {
+                    self.visit_dir(&path, dir);
+                    Ok(())
+                }
             },
             Ok(metadata) if metadata.is_symlink() => {
-                log::info!("{}: symlink; skipping", path.display())
+                log::info!("{}: symlink; skipping", path.display());
+                Ok(())
             }
-            Ok(_) => log::info!("{}: unknown type; skipping", path.display()),
+            Ok(_) => {
+                log::info!("{}: unknown type; skipping", path.display());
+                Ok(())
+            }
+        } {
+            log::error!("{}: error: {}", path.display(), e)
         }
     }
 
-    fn visit_file(&self, path: PathBuf, metadata: Metadata) {
+    fn visit_file(&self, path: &PathBuf, metadata: &Metadata) {
         let local_path = path.strip_prefix(&self.folder).unwrap().to_owned();
 
         let db_file = match self.files_repository.find_by_path(local_path.as_path()) {
@@ -213,7 +232,7 @@ impl Push {
 
     fn process_chunk(&self, source: &mut fs::File, file: &File, chunk: &Chunk) {
         if let Err(e) = source.seek(SeekFrom::Start(chunk.offset)) {
-            error!(
+            log::error!(
                 "Error seeking to chunk {} of {}: {}",
                 chunk.idx + 1,
                 file.path,
@@ -227,7 +246,7 @@ impl Push {
             Ok(size) if size == chunk.payload_size as usize => {}
             Ok(size) => {
                 // fixme this is not an error, we need to deal with it
-                error!(
+                log::error!(
                     "Error reading chunk {} of {}: read {} bytes instead of {} bytes",
                     chunk.idx + 1,
                     file.path,
@@ -237,7 +256,7 @@ impl Push {
                 return;
             }
             Err(e) => {
-                error!(
+                log::error!(
                     "Error reading chunk {} of {}: {}",
                     chunk.idx + 1,
                     file.path,

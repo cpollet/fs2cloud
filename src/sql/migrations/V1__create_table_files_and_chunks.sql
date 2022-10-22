@@ -4,7 +4,8 @@ create table files
     path   varchar,
     sha256 varchar,
     size   number,
-    status varchar -- upload status: PENDING, SUCCESS, ERROR
+    status varchar, -- upload status: PENDING, SUCCESS, ERROR
+    unique (path)
 );
 
 create table chunks
@@ -16,7 +17,8 @@ create table chunks
     offset       number,  -- offset of the chunk
     size         number,  -- size of the encrypted data, i.e. what is sent to the cloud
     payload_size number,  -- size of the encrypted payload
-    status       varchar  -- upload status: PENDING, SUCCESS, ERROR
+    status       varchar, -- upload status: PENDING, SUCCESS, ERROR
+    unique (file_uuid, idx)
 );
 
 create table inodes
