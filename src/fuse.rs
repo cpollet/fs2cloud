@@ -119,7 +119,7 @@ impl Fs2CloudFS {
             .unwrap_or_else(|| {
                 log::debug!("Read chunk {} from store", chunk.uuid);
                 self.store.get(chunk.uuid).and_then(|cipher_bytes| {
-                    let mut clear_bytes = Vec::with_capacity(chunk.payload_size);
+                    let mut clear_bytes = Vec::with_capacity(chunk.payload_size as usize);
                     match self
                         .pgp
                         .decrypt(Cursor::new(cipher_bytes), &mut clear_bytes)
@@ -234,7 +234,7 @@ impl Filesystem for Fs2CloudFS {
 
         let chunks = match self
             .chunks_repository
-            .find_by_file_uuid(inode.file_uuid.unwrap())
+            .find_by_file_uuid(&inode.file_uuid.unwrap())
         {
             Ok(chunks) => chunks,
             Err(e) => {
@@ -244,14 +244,15 @@ impl Filesystem for Fs2CloudFS {
             }
         };
 
+        // todo review comment
         // in the worst case, we could read:
         //  - 1 bytes from chunk n
-        //  - size-2 bytes from chunks n+1..m
+        //  - size-2 bytes from chunks n+1..m (rounded to juste size)
         //  - 1 byte from m+1
         // we could need to waste 2 chunks worth of bytes to read 2 bytes, hence chunk_size*2 below
         let mut data: Vec<u8> =
-            Vec::with_capacity((self.chunk_size.get_bytes() * 2 + (size - 2) as u128) as usize);
-        let mut offset = offset as usize;
+            Vec::with_capacity((self.chunk_size.get_bytes() * 2 + size as u128) as usize);
+        let mut offset = offset as u64;
         for chunk in chunks {
             log::trace!(
                 "chunk {}: offset={}, buffer={}",

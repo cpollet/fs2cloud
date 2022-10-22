@@ -98,10 +98,13 @@ impl FilesRepository {
             .map_err(Error::from)
     }
 
-    pub fn mark_done(&self, uuid: &Uuid, sha256: String) -> Result<(), Error> {
+    pub fn mark_done(&self, uuid: &Uuid, sha256: &str) -> Result<(), Error> {
         match self.pool.get()?.execute(
             include_str!("sql/files_mark_done.sql"),
-            &[(":uuid", &uuid.to_string()), (":sha256", &sha256)],
+            &[
+                (":uuid", &uuid.to_string()),
+                (":sha256", &sha256.to_string()),
+            ],
         ) {
             Ok(0) => Err(Error::new(&format!("File {} not found in DB", uuid))),
             Ok(_) => Ok(()),

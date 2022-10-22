@@ -7,9 +7,9 @@ struct JsonChunk {
     uuid: String,
     idx: u64,
     sha256: String,
-    offset: usize,
-    size: usize,
-    payload_size: usize,
+    offset: u64,
+    size: u64,
+    payload_size: u64,
 }
 
 impl From<(&File, Vec<Chunk>)> for JsonFile {
@@ -83,7 +83,12 @@ pub mod export {
                 .list_all()
                 .unwrap()
                 .iter()
-                .map(|f| (f, self.chunks_repository.find_by_file_uuid(f.uuid).unwrap()))
+                .map(|f| {
+                    (
+                        f,
+                        self.chunks_repository.find_by_file_uuid(&f.uuid).unwrap(),
+                    )
+                })
                 .map(JsonFile::from)
                 .collect();
 
@@ -154,7 +159,7 @@ pub mod import {
                             Uuid::parse_str(&chunk.uuid).unwrap(),
                             db_file.uuid,
                             chunk.idx,
-                            chunk.sha256.clone(),
+                            &chunk.sha256,
                             chunk.offset,
                             chunk.size,
                             chunk.payload_size,

@@ -11,9 +11,9 @@ pub struct Chunk {
     pub file_uuid: Uuid,
     pub idx: u64,
     pub sha256: String,
-    pub offset: usize,
-    pub size: usize,
-    pub payload_size: usize,
+    pub offset: u64,
+    pub size: u64,
+    pub payload_size: u64,
 }
 
 impl From<&Row<'_>> for Chunk {
@@ -46,16 +46,16 @@ impl ChunksRepository {
         uuid: Uuid,
         file_uuid: Uuid,
         idx: u64,
-        sha256: String,
-        offset: usize,
-        size: usize,
-        payload_size: usize,
+        sha256: &str,
+        offset: u64,
+        size: u64,
+        payload_size: u64,
     ) -> Result<Chunk, Error> {
         let chunk = Chunk {
             uuid,
             file_uuid,
             idx,
-            sha256,
+            sha256: sha256.to_owned(),
             offset,
             size,
             payload_size,
@@ -79,15 +79,19 @@ impl ChunksRepository {
             .map(|_| chunk)
     }
 
-    pub fn mark_done(&self, uuid: Uuid) -> Result<(), Error> {
+    pub fn mark_done(&self, uuid: &Uuid, sha256: &str, size: u64) -> Result<(), Error> {
         self.pool.get().map_err(Error::from)?.execute(
             include_str!("sql/chunks_mark_done.sql"),
-            &[(":uuid", &uuid.to_string())],
+            &[
+                (":uuid", &uuid.to_string()),
+                (":sha256", &sha256.to_string()),
+                (":size", &size.to_string()),
+            ],
         );
         Ok(()) // fixme
     }
 
-    pub fn find_by_file_uuid(&self, file_uuid: Uuid) -> Result<Vec<Chunk>, Error> {
+    pub fn find_by_file_uuid(&self, file_uuid: &Uuid) -> Result<Vec<Chunk>, Error> {
         let connection = self.pool.get().map_err(Error::from)?;
 
         let mut stmt = connection
@@ -100,6 +104,59 @@ impl ChunksRepository {
 
         rows.map(|row| Ok(row.into()))
             .collect()
+            .map_err(Error::from)
+    }
+
+    pub fn find_by_file_uuid_and_index(
+        &self,
+        file_uuid: &Uuid,
+        idx: u64,
+    ) -> Result<Option<Chunk>, Error> {
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        let mut stmt = connection
+            .prepare(include_str!("sql/chunks_find_by_file_uuid_and_idx.sql"))
+            .map_err(Error::from)?;
+
+        let rows = stmt
+            .query(&[
+                (":file_uuid", &file_uuid.to_string()),
+                (":idx", &idx.to_string()),
+            ])
+            .map_err(Error::from)?;
+
+        let mut rows = rows
+            .map(|row| Ok(row.into()))
+            .collect::<Vec<Chunk>>()
+            .map_err(Error::from)?;
+
+        match rows.len() {
+            0 => Ok(None),
+            1 => Ok(Some(rows.remove(0))),
+            _ => Err(Error::new("more than 1 result found")),
+        }
+    }
+
+    pub fn find_by_file_uuid_and_status(
+        &self,
+        file_uuid: &Uuid,
+        status: &str,
+    ) -> Result<Vec<Chunk>, Error> {
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        let mut stmt = connection
+            .prepare(include_str!("sql/chunks_find_by_file_uuid_and_status.sql"))
+            .map_err(Error::from)?;
+
+        let rows = stmt
+            .query(&[
+                (":file_uuid", &file_uuid.to_string()),
+                (":status", &status.to_string()),
+            ])
+            .map_err(Error::from)?;
+
+        rows.map(|row| Ok(row.into()))
+            .collect::<Vec<Chunk>>()
             .map_err(Error::from)
     }
 }
