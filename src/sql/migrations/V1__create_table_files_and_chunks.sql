@@ -4,6 +4,7 @@ create table files
     path   varchar,
     sha256 varchar,
     size   number,
+    chunks number,
     status varchar, -- upload status: PENDING, SUCCESS, ERROR
     unique (path)
 );

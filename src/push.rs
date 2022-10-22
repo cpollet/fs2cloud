@@ -16,7 +16,7 @@ use crate::fs_repository::FsRepository;
 use crate::pgp::Pgp;
 use crate::store::CloudStore;
 use crate::thread_pool::ThreadPool;
-use crate::Error;
+use crate::{chunk, Error};
 
 pub struct Push {
     folder: PathBuf,
@@ -155,6 +155,9 @@ impl Push {
     fn visit_file(&self, path: &PathBuf, metadata: &Metadata) {
         let local_path = path.strip_prefix(&self.folder).unwrap().to_owned();
 
+        let chunk_size = self.chunk_size.get_bytes() as u64;
+        let chunks_count = (metadata.len() + chunk_size as u64 - 1) / chunk_size as u64;
+
         let db_file = match self.files_repository.find_by_path(local_path.as_path()) {
             Err(e) => {
                 log::error!("{}: error: {}", path.display(), e);
@@ -166,6 +169,7 @@ impl Push {
                     local_path.display().to_string(),
                     "".into(),
                     metadata.len() as usize,
+                    chunks_count,
                 ) {
                     Ok(f) => f,
                     Err(e) => {
@@ -180,8 +184,6 @@ impl Push {
             }
         };
 
-        let chunk_size = self.chunk_size.get_bytes() as u64;
-        let chunks_count = (metadata.len() + chunk_size as u64 - 1) / chunk_size as u64;
         log::info!(
             "{}: size {}; uuid {}, {} chunks",
             local_path.display(),
@@ -266,58 +268,51 @@ impl Push {
             }
         }
 
-        let chunk_size = chunk.payload_size;
+        let chunk_data = chunk::Chunk {
+            metadata: chunk::Metadata {
+                file: file.path.clone(),
+                idx: chunk.idx,
+                total: file.chunks,
+            },
+            payload: data,
+        };
         let pgp = self.pgp.clone();
-        let file_path = file.path.clone();
-        let chunk_index = chunk.idx;
         let store = self.store.clone();
-        let uuid = chunk.uuid;
         let chunks_repository = self.chunks_repository.clone();
         let files_repository = self.files_repository.clone();
+        let chuck_uuid = chunk.uuid;
         let file_uuid = chunk.file_uuid;
         self.thread_pool.execute(move || {
-            let mut writer = Vec::<u8>::with_capacity(chunk_size as usize);
+            let file = chunk_data.metadata.file.clone();
+            let idx = chunk_data.metadata.idx;
+            let bytes = Vec::<u8>::try_from(&chunk_data).unwrap();
 
-            if let Err(e) = pgp.encrypt(&mut data.as_slice(), &mut writer) {
-                log::error!(
-                    "{}: unable to encrypt chunk {}: {}",
-                    file_path,
-                    chunk_index,
-                    e
-                );
+            let mut writer = Vec::<u8>::with_capacity(bytes.len());
+            if let Err(e) = pgp.encrypt(&mut bytes.as_slice(), &mut writer) {
+                log::error!("{}: unable to encrypt chunk {}: {}", file, idx, e);
                 return;
             }
-            if let Err(e) = store.put(uuid, writer.as_slice()) {
-                log::error!(
-                    "{}: unable to upload chunk {}: {}",
-                    file_path,
-                    chunk_index,
-                    e
-                );
+            if let Err(e) = store.put(chuck_uuid, writer.as_slice()) {
+                log::error!("{}: unable to upload chunk {}: {}", file, idx, e);
                 return;
             }
 
             if let Err(e) = chunks_repository.mark_done(
-                &uuid,
+                &chuck_uuid,
                 &sha256::digest_bytes(writer.as_slice()),
                 writer.len() as u64,
             ) {
-                log::error!(
-                    "{}: unable to finalize chunk {}: {}",
-                    file_path,
-                    chunk_index,
-                    e
-                );
+                log::error!("{}: unable to finalize chunk {}: {}", file, idx, e);
             }
             match chunks_repository.find_by_file_uuid_and_status(&file_uuid, "PENDING") {
                 Err(e) => {
-                    log::error!("{}: unable to finalize file: {}", file_path, e);
+                    log::error!("{}: unable to finalize file: {}", file, e);
                 }
                 Ok(chunks) => {
                     if chunks.is_empty() {
                         match files_repository.mark_done(&file_uuid, "") {
                             Err(e) => {
-                                log::error!("{}: unable to finalize file: {}", file_path, e);
+                                log::error!("{}: unable to finalize file: {}", file, e);
                             }
                             Ok(_) => {}
                         }

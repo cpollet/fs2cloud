@@ -1,1 +1,1 @@
-select uuid, path, sha256, size from files
+select uuid, path, sha256, size, chunks from files

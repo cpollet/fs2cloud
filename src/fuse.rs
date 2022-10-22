@@ -1,10 +1,10 @@
+use crate::chunk;
 use crate::chunks_repository::{Chunk, ChunksRepository};
 use crate::error::Error;
 use crate::files_repository::FilesRepository;
 use crate::fs_repository::{FsRepository, Inode};
 use crate::pgp::Pgp;
 use crate::store::CloudStore;
-use byte_unit::Byte;
 use clap::{Arg, ArgMatches, Command};
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
@@ -31,7 +31,6 @@ pub struct Fuse {
     pool: Pool<SqliteConnectionManager>,
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
-    chunk_size: Byte,
 }
 
 pub trait FuseConfig {
@@ -57,7 +56,6 @@ impl Fuse {
         pool: Pool<SqliteConnectionManager>,
         pgp: Pgp,
         store: Box<dyn CloudStore>,
-        chunk_size: Byte,
     ) -> Result<Self, Error> {
         if let Some(path) = config.get_cache_folder() {
             fs::create_dir_all(path)?;
@@ -68,7 +66,6 @@ impl Fuse {
             pool,
             pgp: Arc::new(pgp),
             store: Arc::new(store),
-            chunk_size,
         })
     }
 
@@ -81,7 +78,6 @@ impl Fuse {
             chunks_repository: ChunksRepository::new(self.pool.clone()),
             pgp: self.pgp.clone(),
             store: self.store.clone(),
-            chunk_size: self.chunk_size,
         };
 
         let fs_handle = match fuser::spawn_mount2(fs, &self.mountpoint, &options) {
@@ -109,11 +105,10 @@ struct Fs2CloudFS {
     chunks_repository: ChunksRepository,
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
-    chunk_size: Byte,
 }
 
 impl Fs2CloudFS {
-    fn read_from_store(&self, chunk: &Chunk) -> Result<Vec<u8>, Error> {
+    fn read_from_store(&self, chunk: &Chunk) -> Result<chunk::Chunk, Error> {
         self.read_from_cache_or_store(&chunk.uuid)
             .map(Ok)
             .unwrap_or_else(|| {
@@ -126,7 +121,7 @@ impl Fs2CloudFS {
                     {
                         Ok(_) => {
                             self.write_to_cache(&chunk.uuid, clear_bytes.as_slice());
-                            Ok(clear_bytes)
+                            Ok(Self::deserialize_chunk(clear_bytes))
                         }
                         Err(e) => Err(e),
                     }
@@ -134,14 +129,27 @@ impl Fs2CloudFS {
             })
     }
 
-    fn read_from_cache_or_store(&self, chunk: &Uuid) -> Option<Vec<u8>> {
+    fn deserialize_chunk(data: Vec<u8>) -> chunk::Chunk {
+        let chunk = chunk::Chunk::try_from(&data).unwrap();
+        log::debug!(
+            "{}: deserialized chunk {}/{}",
+            chunk.metadata.file,
+            chunk.metadata.idx + 1,
+            chunk.metadata.total,
+        );
+        chunk
+    }
+
+    fn read_from_cache_or_store(&self, chunk: &Uuid) -> Option<chunk::Chunk> {
         self.cache
             .as_ref()
             .map(|path| path.join(Path::new(&chunk.to_string())))
             .and_then(|path| OpenOptions::new().read(true).open(path).ok())
             .and_then(|mut file| {
                 let mut bytes = Vec::new();
-                file.read_to_end(&mut bytes).ok().map(|_| bytes)
+                file.read_to_end(&mut bytes)
+                    .ok()
+                    .map(|_| Self::deserialize_chunk(bytes))
             })
     }
 
@@ -244,14 +252,7 @@ impl Filesystem for Fs2CloudFS {
             }
         };
 
-        // todo review comment
-        // in the worst case, we could read:
-        //  - 1 bytes from chunk n
-        //  - size-2 bytes from chunks n+1..m (rounded to juste size)
-        //  - 1 byte from m+1
-        // we could need to waste 2 chunks worth of bytes to read 2 bytes, hence chunk_size*2 below
-        let mut data: Vec<u8> =
-            Vec::with_capacity((self.chunk_size.get_bytes() * 2 + size as u128) as usize);
+        let mut data: Vec<u8> = Vec::new();
         let mut offset = offset as u64;
         for chunk in chunks {
             log::trace!(
@@ -271,7 +272,7 @@ impl Filesystem for Fs2CloudFS {
             }
 
             match self.read_from_store(&chunk) {
-                Ok(bytes) => {
+                Ok(chunk::Chunk { payload: bytes, .. }) => {
                     log::trace!("read(ino:{}) -> decrypted {} bytes", ino, bytes.len());
                     data.write_all(bytes.as_slice()).unwrap()
                 }

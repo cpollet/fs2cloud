@@ -8,9 +8,10 @@ use crate::fuse::Fuse;
 use crate::opts::parse;
 use crate::pgp::Pgp;
 use crate::pull::Pull;
-use crate::push::{Push, PushConfig};
+use crate::push::Push;
 use crate::thread_pool::ThreadPool;
 
+mod chunk;
 mod chunks_repository;
 mod config;
 mod database;
@@ -73,7 +74,6 @@ fn run() -> Result<(), Error> {
                     pool,
                     Pgp::new(&config)?,
                     store::new(&config)?,
-                    config.get_chunk_size(),
                 )?
                 .execute();
                 Ok(())

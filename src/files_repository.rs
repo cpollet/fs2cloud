@@ -12,6 +12,7 @@ pub struct File {
     pub path: String,
     pub size: usize,
     pub sha256: String,
+    pub chunks: u64,
 }
 
 impl From<&Row<'_>> for File {
@@ -22,6 +23,7 @@ impl From<&Row<'_>> for File {
             path: row.get(1).unwrap(),
             sha256: row.get(2).unwrap(),
             size: row.get(3).unwrap(),
+            chunks: row.get(4).unwrap(),
         }
     }
 }
@@ -35,12 +37,19 @@ impl FilesRepository {
         FilesRepository { pool }
     }
 
-    pub fn insert(&self, path: String, sha256: String, size: usize) -> Result<File, Error> {
+    pub fn insert(
+        &self,
+        path: String,
+        sha256: String,
+        size: usize,
+        chunks: u64,
+    ) -> Result<File, Error> {
         let file = File {
             uuid: Uuid::new_v4(),
             path,
             sha256,
             size,
+            chunks,
         };
         self.pool
             .get()
@@ -52,6 +61,7 @@ impl FilesRepository {
                     (":path", &file.path),
                     (":sha256", &file.sha256),
                     (":size", &file.size.to_string()),
+                    (":chunks", &file.chunks.to_string()),
                 ],
             )
             .map_err(Error::from)

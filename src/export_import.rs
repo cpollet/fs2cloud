@@ -148,10 +148,12 @@ pub mod import {
                 return;
             }
 
-            match self
-                .files_repository
-                .insert(file.path.clone(), file.sha256.clone(), file.size)
-            {
+            match self.files_repository.insert(
+                file.path.clone(),
+                file.sha256.clone(),
+                file.size,
+                file.chunks.len() as u64,
+            ) {
                 Err(e) => log::error!("Could not import file {}: {}", file.path, e),
                 Ok(db_file) => {
                     for chunk in file.chunks.as_slice() {

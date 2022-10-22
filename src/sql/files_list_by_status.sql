@@ -1,1 +1,1 @@
-select uuid, path, sha256, size from files where status=:status
+select uuid, path, sha256, size, chunks from files where status=:status
