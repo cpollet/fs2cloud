@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+pub mod repository;
+
 #[derive(Serialize, Deserialize)]
 pub struct Metadata {
     pub file: String,

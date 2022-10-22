@@ -1,6 +1,6 @@
 use byte_unit::Byte;
 use std::fs;
-use std::fs::{Metadata, ReadDir};
+use std::fs::ReadDir;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -10,13 +10,14 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use uuid::Uuid;
 
-use crate::chunks_repository::{Chunk, ChunksRepository};
-use crate::files_repository::{File, FilesRepository};
-use crate::fs_repository::FsRepository;
+use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository};
+use crate::chunk::{Chunk, Metadata};
+use crate::file::repository::{File as DbFile, Repository as FilesRepository};
+use crate::fuse::fs::repository::Repository as FsRepository;
 use crate::pgp::Pgp;
 use crate::store::CloudStore;
 use crate::thread_pool::ThreadPool;
-use crate::{chunk, Error};
+use crate::Error;
 
 pub struct Push {
     folder: PathBuf,
@@ -152,7 +153,7 @@ impl Push {
         }
     }
 
-    fn visit_file(&self, path: &PathBuf, metadata: &Metadata) {
+    fn visit_file(&self, path: &PathBuf, metadata: &fs::Metadata) {
         let local_path = path.strip_prefix(&self.folder).unwrap().to_owned();
 
         let chunk_size = self.chunk_size.get_bytes() as u64;
@@ -177,7 +178,7 @@ impl Push {
                         return;
                     }
                 };
-                if let Err(e) = crate::fs::insert(&file.uuid, &path, &self.fs_repository) {
+                if let Err(e) = crate::fuse::fs::insert(&file.uuid, &path, &self.fs_repository) {
                     log::error!("{}: unable to update fuse data: {}", path.display(), e);
                 }
                 file
@@ -232,7 +233,7 @@ impl Push {
         }
     }
 
-    fn process_chunk(&self, source: &mut fs::File, file: &File, chunk: &Chunk) {
+    fn process_chunk(&self, source: &mut fs::File, file: &DbFile, chunk: &DbChunk) {
         if let Err(e) = source.seek(SeekFrom::Start(chunk.offset)) {
             log::error!(
                 "Error seeking to chunk {} of {}: {}",
@@ -268,8 +269,8 @@ impl Push {
             }
         }
 
-        let chunk_data = chunk::Chunk {
-            metadata: chunk::Metadata {
+        let chunk_data = Chunk {
+            metadata: Metadata {
                 file: file.path.clone(),
                 idx: chunk.idx,
                 total: file.chunks,

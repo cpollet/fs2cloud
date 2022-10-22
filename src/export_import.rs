@@ -1,5 +1,5 @@
-use crate::chunks_repository::Chunk;
-use crate::files_repository::File;
+use crate::chunk::repository::Chunk;
+use crate::file::repository::File;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -50,9 +50,9 @@ impl From<&Chunk> for JsonChunk {
 }
 
 pub mod export {
-    use crate::chunks_repository::ChunksRepository;
+    use crate::chunk::repository::Repository as ChunksRepository;
     use crate::export_import::JsonFile;
-    use crate::files_repository::FilesRepository;
+    use crate::file::repository::Repository as FilesRepository;
     use crate::Error;
     use clap::Command;
     use r2d2::Pool;
@@ -98,11 +98,11 @@ pub mod export {
 }
 
 pub mod import {
-    use crate::chunks_repository::ChunksRepository;
+    use crate::chunk::repository::Repository as ChunksRepository;
     use crate::export_import::JsonFile;
-    use crate::files_repository::FilesRepository;
-    use crate::fs_repository::FsRepository;
-    use crate::{fs, Error};
+    use crate::file::repository::Repository as FilesRepository;
+    use crate::fuse::fs::repository::Repository as FsRepository;
+    use crate::Error;
     use clap::Command;
     use r2d2::Pool;
     use r2d2_sqlite::SqliteConnectionManager;
@@ -175,7 +175,9 @@ pub mod import {
                         }
                     }
 
-                    if let Err(e) = fs::insert(&db_file.uuid, path, &self.fs_repository) {
+                    if let Err(e) =
+                        crate::fuse::fs::insert(&db_file.uuid, path, &self.fs_repository)
+                    {
                         log::error!("Cannot insert inode for {}: {}", file.path, e);
                     }
                 }

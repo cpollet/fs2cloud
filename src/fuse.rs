@@ -1,8 +1,8 @@
 use crate::chunk;
-use crate::chunks_repository::{Chunk, ChunksRepository};
+use crate::chunk::repository::{Chunk, Repository as ChunksRepository};
 use crate::error::Error;
-use crate::files_repository::FilesRepository;
-use crate::fs_repository::{FsRepository, Inode};
+use crate::file::repository::Repository as FilesRepository;
+use crate::fuse::fs::repository::{Inode, Repository as FsRepository};
 use crate::pgp::Pgp;
 use crate::store::CloudStore;
 use clap::{Arg, ArgMatches, Command};
@@ -15,13 +15,14 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use signal_hook::iterator::Signals;
 use std::ffi::OsStr;
-use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 use uuid::Uuid;
+
+pub mod fs;
 
 pub const CMD: &str = "fuse";
 
@@ -58,7 +59,7 @@ impl Fuse {
         store: Box<dyn CloudStore>,
     ) -> Result<Self, Error> {
         if let Some(path) = config.get_cache_folder() {
-            fs::create_dir_all(path)?;
+            std::fs::create_dir_all(path)?;
         }
         Ok(Self {
             cache: config.get_cache_folder().map(PathBuf::from),

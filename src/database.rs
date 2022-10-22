@@ -3,10 +3,7 @@ use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use std::ops::DerefMut;
 
-mod embedded {
-    use refinery::embed_migrations;
-    embed_migrations!("src/sql/migrations");
-}
+mod embedded;
 
 pub trait DatabaseConfig {
     fn get_database_path(&self) -> Result<&str, Error>;

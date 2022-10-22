@@ -28,13 +28,13 @@ impl From<&Row<'_>> for File {
     }
 }
 
-pub struct FilesRepository {
+pub struct Repository {
     pool: Pool<SqliteConnectionManager>,
 }
 
-impl FilesRepository {
+impl Repository {
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
-        FilesRepository { pool }
+        Repository { pool }
     }
 
     pub fn insert(
@@ -55,7 +55,7 @@ impl FilesRepository {
             .get()
             .map_err(Error::from)?
             .execute(
-                include_str!("sql/files_insert.sql"),
+                include_str!("sql/insert.sql"),
                 &[
                     (":uuid", &file.uuid.to_string()),
                     (":path", &file.path),
@@ -73,7 +73,7 @@ impl FilesRepository {
             .get()
             .map_err(Error::from)?
             .query_row(
-                include_str!("sql/files_find_by_path.sql"),
+                include_str!("sql/find_by_path.sql"),
                 &[(":path", &path.display().to_string())],
                 |row| Ok(row.into()),
             )
@@ -86,7 +86,7 @@ impl FilesRepository {
             .get()
             .map_err(Error::from)?
             .query_row(
-                include_str!("sql/files_find_by_uuid.sql"),
+                include_str!("sql/find_by_uuid.sql"),
                 &[(":uuid", &uuid.to_string())],
                 |row| Ok(row.into()),
             )
@@ -98,7 +98,7 @@ impl FilesRepository {
         let connection = self.pool.get().map_err(Error::from)?;
 
         let mut stmt = connection
-            .prepare(include_str!("sql/files_list_by_status.sql"))
+            .prepare(include_str!("sql/list_by_status.sql"))
             .map_err(Error::from)?;
 
         let rows = stmt.query(&[(":status", status)]).map_err(Error::from)?;
@@ -110,7 +110,7 @@ impl FilesRepository {
 
     pub fn mark_done(&self, uuid: &Uuid, sha256: &str) -> Result<(), Error> {
         match self.pool.get()?.execute(
-            include_str!("sql/files_mark_done.sql"),
+            include_str!("sql/mark_done.sql"),
             &[
                 (":uuid", &uuid.to_string()),
                 (":sha256", &sha256.to_string()),
@@ -126,7 +126,7 @@ impl FilesRepository {
         let connection = self.pool.get().map_err(Error::from)?;
 
         let mut stmt = connection
-            .prepare(include_str!("sql/files_list_all.sql"))
+            .prepare(include_str!("sql/list_all.sql"))
             .map_err(Error::from)?;
 
         let rows = stmt.query([]).map_err(Error::from)?;

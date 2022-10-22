@@ -38,11 +38,11 @@ impl From<&Row<'_>> for Inode {
     }
 }
 
-pub struct FsRepository {
+pub struct Repository {
     pool: Pool<SqliteConnectionManager>,
 }
 
-impl FsRepository {
+impl Repository {
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
         Self { pool }
     }

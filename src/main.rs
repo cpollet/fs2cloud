@@ -12,14 +12,11 @@ use crate::push::Push;
 use crate::thread_pool::ThreadPool;
 
 mod chunk;
-mod chunks_repository;
 mod config;
 mod database;
 mod error;
 mod export_import;
-mod files_repository;
-mod fs;
-mod fs_repository;
+mod file;
 mod fuse;
 mod opts;
 mod pgp;

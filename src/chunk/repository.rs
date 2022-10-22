@@ -32,13 +32,13 @@ impl From<&Row<'_>> for Chunk {
     }
 }
 
-pub struct ChunksRepository {
+pub struct Repository {
     pool: Pool<SqliteConnectionManager>,
 }
 
-impl ChunksRepository {
+impl Repository {
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
-        ChunksRepository { pool }
+        Repository { pool }
     }
 
     pub fn insert(
@@ -64,7 +64,7 @@ impl ChunksRepository {
             .get()
             .map_err(Error::from)?
             .execute(
-                include_str!("sql/chunks_insert.sql"),
+                include_str!("sql/insert.sql"),
                 &[
                     (":uuid", &chunk.uuid.to_string()),
                     (":file_uuid", &chunk.file_uuid.to_string()),
@@ -85,7 +85,7 @@ impl ChunksRepository {
             .get()
             .map_err(Error::from)?
             .execute(
-                include_str!("sql/chunks_mark_done.sql"),
+                include_str!("sql/mark_done.sql"),
                 &[
                     (":uuid", &uuid.to_string()),
                     (":sha256", &sha256.to_string()),
@@ -104,7 +104,7 @@ impl ChunksRepository {
         let connection = self.pool.get().map_err(Error::from)?;
 
         let mut stmt = connection
-            .prepare(include_str!("sql/chunks_list_by_file_uuid.sql"))
+            .prepare(include_str!("sql/list_by_file_uuid.sql"))
             .map_err(Error::from)?;
 
         let rows = stmt
@@ -124,7 +124,7 @@ impl ChunksRepository {
         let connection = self.pool.get().map_err(Error::from)?;
 
         let mut stmt = connection
-            .prepare(include_str!("sql/chunks_find_by_file_uuid_and_idx.sql"))
+            .prepare(include_str!("sql/find_by_file_uuid_and_idx.sql"))
             .map_err(Error::from)?;
 
         let rows = stmt
@@ -154,7 +154,7 @@ impl ChunksRepository {
         let connection = self.pool.get().map_err(Error::from)?;
 
         let mut stmt = connection
-            .prepare(include_str!("sql/chunks_find_by_file_uuid_and_status.sql"))
+            .prepare(include_str!("sql/find_by_file_uuid_and_status.sql"))
             .map_err(Error::from)?;
 
         let rows = stmt
