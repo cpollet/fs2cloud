@@ -14,6 +14,7 @@ pub struct Chunk {
     pub offset: u64,
     pub size: u64,
     pub payload_size: u64,
+    pub status: String,
 }
 
 impl From<&Row<'_>> for Chunk {
@@ -28,6 +29,7 @@ impl From<&Row<'_>> for Chunk {
             offset: row.get(4).unwrap(),
             size: row.get(5).unwrap(),
             payload_size: row.get(6).unwrap(),
+            status: row.get(7).unwrap(),
         }
     }
 }
@@ -55,10 +57,11 @@ impl Repository {
             uuid,
             file_uuid,
             idx,
-            sha256: sha256.to_owned(),
+            sha256: sha256.into(),
             offset,
             size,
             payload_size,
+            status: "PENDING".into(),
         };
         self.pool
             .get()
@@ -73,6 +76,7 @@ impl Repository {
                     (":offset", &chunk.offset.to_string()),
                     (":size", &chunk.size.to_string()),
                     (":payload_size", &chunk.payload_size.to_string()),
+                    (":status", &chunk.status),
                 ],
             )
             .map_err(Error::from)
@@ -162,6 +166,21 @@ impl Repository {
                 (":file_uuid", &file_uuid.to_string()),
                 (":status", &status.to_string()),
             ])
+            .map_err(Error::from)?;
+
+        rows.map(|row| Ok(row.into()))
+            .collect::<Vec<Chunk>>()
+            .map_err(Error::from)
+    }
+    pub fn find_siblings_by_uuid(&self, uuid: &Uuid) -> Result<Vec<Chunk>, Error> {
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        let mut stmt = connection
+            .prepare(include_str!("sql/find_siblings_by_uuid.sql"))
+            .map_err(Error::from)?;
+
+        let rows = stmt
+            .query(&[(":uuid", &uuid.to_string())])
             .map_err(Error::from)?;
 
         rows.map(|row| Ok(row.into()))

@@ -1,3 +1,4 @@
+use crate::chunk::completer::Completer;
 use byte_unit::Byte;
 use std::fs;
 use std::fs::ReadDir;
@@ -24,6 +25,7 @@ pub struct Push {
     files_repository: Arc<FilesRepository>,
     chunks_repository: Arc<ChunksRepository>,
     fs_repository: FsRepository,
+    completer: Arc<Completer>,
     chunk_size: Byte,
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
@@ -57,11 +59,17 @@ impl Push {
         store: Box<dyn CloudStore>,
         thread_pool: ThreadPool,
     ) -> Result<Self, Error> {
+        let files_repository = Arc::new(FilesRepository::new(pool.clone()));
+        let chunks_repository = Arc::new(ChunksRepository::new(pool.clone()));
         Ok(Push {
             folder: PathBuf::from(args.value_of("folder").unwrap()),
-            files_repository: Arc::new(FilesRepository::new(pool.clone())),
-            chunks_repository: Arc::new(ChunksRepository::new(pool.clone())),
+            files_repository: files_repository.clone(),
+            chunks_repository: chunks_repository.clone(),
             fs_repository: FsRepository::new(pool),
+            completer: Arc::new(Completer::new(
+                files_repository.clone(),
+                chunks_repository.clone(),
+            )),
             chunk_size: config.get_chunk_size(),
             pgp: Arc::new(pgp),
             store: Arc::new(store),
@@ -70,7 +78,7 @@ impl Push {
     }
 
     pub fn execute(&self) {
-        log::info!("Scanning files in `{}`...", self.folder.display(),);
+        log::info!("Scanning files in `{}`...", self.folder.display());
         match fs::read_dir(&self.folder).map_err(Error::from) {
             Err(e) => {
                 log::error!("{}: error: {}", self.folder.display(), e);
@@ -79,7 +87,7 @@ impl Push {
             Ok(dir) => self.visit_dir(&self.folder, dir),
         }
 
-        log::info!("Processing files from database...");
+        log::info!("Processing files...");
         let files = match self.files_repository.list_by_status("PENDING") {
             Err(e) => {
                 log::error!("error loading files: {}", e);
@@ -269,7 +277,8 @@ impl Push {
             }
         }
 
-        let chunk_data = Chunk {
+        let chunk = Chunk {
+            uuid: chunk.uuid,
             metadata: Metadata {
                 file: file.path.clone(),
                 idx: chunk.idx,
@@ -279,47 +288,23 @@ impl Push {
         };
         let pgp = self.pgp.clone();
         let store = self.store.clone();
-        let chunks_repository = self.chunks_repository.clone();
-        let files_repository = self.files_repository.clone();
-        let chuck_uuid = chunk.uuid;
-        let file_uuid = chunk.file_uuid;
+        let completer = self.completer.clone();
+
         self.thread_pool.execute(move || {
-            let file = chunk_data.metadata.file.clone();
-            let idx = chunk_data.metadata.idx;
-            let bytes = Vec::<u8>::try_from(&chunk_data).unwrap();
-
-            let mut writer = Vec::<u8>::with_capacity(bytes.len());
-            if let Err(e) = pgp.encrypt(&mut bytes.as_slice(), &mut writer) {
-                log::error!("{}: unable to encrypt chunk {}: {}", file, idx, e);
-                return;
-            }
-            if let Err(e) = store.put(chuck_uuid, writer.as_slice()) {
-                log::error!("{}: unable to upload chunk {}: {}", file, idx, e);
-                return;
-            }
-
-            if let Err(e) = chunks_repository.mark_done(
-                &chuck_uuid,
-                &sha256::digest_bytes(writer.as_slice()),
-                writer.len() as u64,
-            ) {
-                log::error!("{}: unable to finalize chunk {}: {}", file, idx, e);
-            }
-            match chunks_repository.find_by_file_uuid_and_status(&file_uuid, "PENDING") {
+            let chunk = match chunk.encrypt(&pgp) {
+                Ok(cipher) => cipher,
                 Err(e) => {
-                    log::error!("{}: unable to finalize file: {}", file, e);
-                }
-                Ok(chunks) => {
-                    if chunks.is_empty() {
-                        match files_repository.mark_done(&file_uuid, "") {
-                            Err(e) => {
-                                log::error!("{}: unable to finalize file: {}", file, e);
-                            }
-                            Ok(_) => {}
-                        }
-                    }
+                    log::error!("{}", e);
+                    return;
                 }
             };
+
+            if let Err(e) = chunk.push(store) {
+                log::error!("{}", e);
+                return;
+            };
+
+            completer.complete(chunk);
         });
     }
 }
