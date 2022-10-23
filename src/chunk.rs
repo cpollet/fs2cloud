@@ -16,6 +16,7 @@ pub struct Metadata {
 
 #[derive(Serialize, Deserialize)]
 pub struct Chunk {
+    version: u8,
     #[serde(skip)]
     pub uuid: Uuid,
     pub metadata: Metadata,
@@ -23,6 +24,15 @@ pub struct Chunk {
 }
 
 impl Chunk {
+    pub fn new(uuid: Uuid, metadata: Metadata, payload: Vec<u8>) -> Self {
+        Self {
+            version: 1,
+            uuid,
+            metadata,
+            payload,
+        }
+    }
+
     pub fn encrypt(self, pgp: &Pgp) -> Result<CipherChunk, Error> {
         let bytes = Vec::<u8>::try_from(&self).unwrap();
         let mut writer = Vec::<u8>::with_capacity(bytes.len());
@@ -42,18 +52,22 @@ impl Chunk {
 }
 
 impl TryFrom<&Chunk> for Vec<u8> {
-    type Error = bincode::Error;
+    type Error = Error;
 
     fn try_from(value: &Chunk) -> Result<Self, Self::Error> {
-        bincode::serialize(value)
+        bincode::serialize(value).map_err(Error::from)
     }
 }
 
 impl TryFrom<&Vec<u8>> for Chunk {
-    type Error = bincode::Error;
+    type Error = Error;
 
     fn try_from(value: &Vec<u8>) -> Result<Self, Self::Error> {
-        bincode::deserialize(value)
+        if value[0] != 1 {
+            Err(Error::new(&format!("unsupported version: {}", value[0])))
+        } else {
+            bincode::deserialize(value).map_err(Error::from)
+        }
     }
 }
 

@@ -86,3 +86,9 @@ impl From<r2d2::Error> for Error {
         Self { msg: e.to_string() }
     }
 }
+
+impl From<bincode::Error> for Error {
+    fn from(e: bincode::Error) -> Self {
+        Self { msg: e.to_string() }
+    }
+}

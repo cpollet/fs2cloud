@@ -277,15 +277,15 @@ impl Push {
             }
         }
 
-        let chunk = Chunk {
-            uuid: chunk.uuid,
-            metadata: Metadata {
+        let chunk = Chunk::new(
+            chunk.uuid,
+            Metadata {
                 file: file.path.clone(),
                 idx: chunk.idx,
                 total: file.chunks,
             },
-            payload: data,
-        };
+            data,
+        );
         let pgp = self.pgp.clone();
         let store = self.store.clone();
         let completer = self.completer.clone();
