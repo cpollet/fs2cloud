@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn it_works() {
         let config = Config {};
-        let mut p = ThreadPool::new(&config);
+        let p = ThreadPool::new(&config);
         println!("job1:queue");
         p.execute(|| {
             let mut rand = rand::thread_rng();
