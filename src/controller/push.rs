@@ -1,90 +1,74 @@
 use crate::chunk::completer::Completer;
+use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository};
+use crate::chunk::{Chunk, Metadata};
+use crate::file::repository::{File as DbFile, Repository as FilesRepository};
+use crate::fuse::fs::repository::Repository as FsRepository;
+use crate::store::CloudStore;
+use crate::{Pgp, ThreadPool};
 use byte_unit::Byte;
 use std::fs;
 use std::fs::ReadDir;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-use clap::{Arg, ArgMatches, Command};
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 use uuid::Uuid;
 
-use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository};
-use crate::chunk::{Chunk, Metadata};
-use crate::file::repository::{File as DbFile, Repository as FilesRepository};
-use crate::fuse::fs::repository::Repository as FsRepository;
-use crate::pgp::Pgp;
-use crate::store::CloudStore;
-use crate::thread_pool::ThreadPool;
-use crate::Error;
+pub struct Config<'a> {
+    pub folder: &'a str,
+    pub chunk_size: u64,
+}
 
-pub struct Push {
-    folder: PathBuf,
+pub fn execute(
+    config: Config,
+    files_repository: FilesRepository,
+    chunks_repository: ChunksRepository,
+    fs_repository: FsRepository,
+    pgp: Pgp,
+    store: Box<dyn CloudStore>,
+    thread_pool: ThreadPool,
+) {
+    let files_repository = Arc::new(files_repository);
+    let chunks_repository = Arc::new(chunks_repository);
+    let completer = Arc::new(Completer::new(
+        files_repository.clone(),
+        chunks_repository.clone(),
+    ));
+    Push {
+        folder: config.folder,
+        chunk_size: config.chunk_size,
+        files_repository,
+        chunks_repository,
+        fs_repository,
+        pgp: Arc::new(pgp),
+        store: Arc::new(store),
+        thread_pool,
+        completer,
+    }
+    .execute();
+}
+
+struct Push<'a> {
+    folder: &'a str,
+    chunk_size: u64,
     files_repository: Arc<FilesRepository>,
     chunks_repository: Arc<ChunksRepository>,
     fs_repository: FsRepository,
-    completer: Arc<Completer>,
-    chunk_size: Byte,
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
     thread_pool: ThreadPool,
+    completer: Arc<Completer>,
 }
 
-pub trait PushConfig {
-    fn get_chunk_size(&self) -> Byte;
-}
+impl<'a> Push<'a> {
+    fn execute(&self) {
+        log::info!("Scanning files in `{}`...", self.folder);
 
-pub const CMD: &str = "push";
-
-impl Push {
-    pub fn cli() -> Command<'static> {
-        Command::new(CMD).about("Copy local folder to cloud").arg(
-            Arg::new("folder")
-                .help("local folder path")
-                .long("folder")
-                .short('f')
-                .required(true)
-                .takes_value(true)
-                .forbid_empty_values(true),
-        )
-    }
-
-    pub fn new(
-        args: &ArgMatches,
-        config: &dyn PushConfig,
-        pool: Pool<SqliteConnectionManager>,
-        pgp: Pgp,
-        store: Box<dyn CloudStore>,
-        thread_pool: ThreadPool,
-    ) -> Result<Self, Error> {
-        let files_repository = Arc::new(FilesRepository::new(pool.clone()));
-        let chunks_repository = Arc::new(ChunksRepository::new(pool.clone()));
-        Ok(Push {
-            folder: PathBuf::from(args.value_of("folder").unwrap()),
-            files_repository: files_repository.clone(),
-            chunks_repository: chunks_repository.clone(),
-            fs_repository: FsRepository::new(pool),
-            completer: Arc::new(Completer::new(
-                files_repository.clone(),
-                chunks_repository.clone(),
-            )),
-            chunk_size: config.get_chunk_size(),
-            pgp: Arc::new(pgp),
-            store: Arc::new(store),
-            thread_pool,
-        })
-    }
-
-    pub fn execute(&self) {
-        log::info!("Scanning files in `{}`...", self.folder.display());
-        match fs::read_dir(&self.folder).map_err(Error::from) {
+        match fs::read_dir(self.folder) {
             Err(e) => {
-                log::error!("{}: error: {}", self.folder.display(), e);
+                log::error!("{}: error: {}", self.folder, e);
                 return;
             }
-            Ok(dir) => self.visit_dir(&self.folder, dir),
+            Ok(dir) => self.visit_dir(&PathBuf::from(self.folder), dir),
         }
 
         log::info!("Processing files...");
@@ -108,7 +92,7 @@ impl Push {
                 Ok(chunks) => chunks,
             };
 
-            let mut path = PathBuf::from(&self.folder);
+            let mut path = PathBuf::from(self.folder);
             path.push(&file.path);
 
             let mut source = match fs::File::open(&path) {
@@ -120,7 +104,7 @@ impl Push {
             };
 
             for chunk in chunks {
-                self.process_chunk(&mut source, &file, &chunk)
+                self.process_chunk(&mut source, &file, &chunk);
             }
         }
     }
@@ -138,13 +122,13 @@ impl Push {
         if let Err(e) = match fs::metadata(&path) {
             Err(e) => Err(e),
             Ok(metadata) if metadata.is_file() => {
-                self.visit_file(&path, &metadata);
+                self.visit_file(path, &metadata);
                 Ok(())
             }
             Ok(metadata) if metadata.is_dir() => match path.read_dir() {
                 Err(e) => Err(e),
                 Ok(dir) => {
-                    self.visit_dir(&path, dir);
+                    self.visit_dir(path, dir);
                     Ok(())
                 }
             },
@@ -161,11 +145,9 @@ impl Push {
         }
     }
 
-    fn visit_file(&self, path: &PathBuf, metadata: &fs::Metadata) {
-        let local_path = path.strip_prefix(&self.folder).unwrap().to_owned();
-
-        let chunk_size = self.chunk_size.get_bytes() as u64;
-        let chunks_count = (metadata.len() + chunk_size as u64 - 1) / chunk_size as u64;
+    fn visit_file(&self, path: &Path, metadata: &fs::Metadata) {
+        let local_path = path.strip_prefix(self.folder).unwrap().to_owned();
+        let chunks_count = (metadata.len() + self.chunk_size - 1) / self.chunk_size;
 
         let db_file = match self.files_repository.find_by_path(local_path.as_path()) {
             Err(e) => {
@@ -186,13 +168,12 @@ impl Push {
                         return;
                     }
                 };
-                if let Err(e) = crate::fuse::fs::insert(&file.uuid, &path, &self.fs_repository) {
+                if let Err(e) = crate::fuse::fs::insert(&file.uuid, path, &self.fs_repository) {
                     log::error!("{}: unable to update fuse data: {}", path.display(), e);
                 }
                 file
             }
         };
-
         log::info!(
             "{}: size {}; uuid {}, {} chunks",
             local_path.display(),
@@ -208,7 +189,7 @@ impl Push {
             {
                 Ok(None) => {
                     let uuid = Uuid::new_v4();
-                    let already_read = chunk_index * chunk_size;
+                    let already_read = chunk_index * self.chunk_size;
                     let left = metadata.len() - already_read;
 
                     match self.chunks_repository.insert(
@@ -216,9 +197,9 @@ impl Push {
                         db_file.uuid,
                         chunk_index,
                         "",
-                        chunk_index * chunk_size,
+                        chunk_index * self.chunk_size,
                         0,
-                        chunk_size.min(left),
+                        self.chunk_size.min(left),
                     ) {
                         Ok(chunk) => {
                             log::debug!(

@@ -1,27 +1,27 @@
 extern crate core;
 
+use crate::chunk::repository::Repository as ChunksRepository;
 use crate::config::Config;
+use crate::controller::json::{export, import};
+use crate::controller::mount;
+use crate::controller::push;
 use crate::error::Error;
-use crate::export_import::export::Export;
-use crate::export_import::import::Import;
-use crate::fuse::Fuse;
-use crate::opts::parse;
+use crate::file::repository::Repository as FilesRepository;
+use crate::fuse::fs::repository::Repository as FsRepository;
 use crate::pgp::Pgp;
-use crate::pull::Pull;
-use crate::push::Push;
 use crate::thread_pool::ThreadPool;
+use clap::{command, Arg, Command};
+use clap_complete::{generate, Shell};
+use std::io;
 
 mod chunk;
 mod config;
+mod controller;
 mod database;
 mod error;
-mod export_import;
 mod file;
 mod fuse;
-mod opts;
 mod pgp;
-mod pull;
-mod push;
 mod store;
 mod thread_pool;
 
@@ -35,58 +35,160 @@ fn main() {
     })
 }
 
-fn run() -> Result<(), Error> {
+fn run() -> Result<(), String> {
     pretty_env_logger::init();
 
-    if let Some(args) = parse() {
-        let config_file = args.value_of("config").unwrap();
-        let config = Config::new(config_file)?;
+    let matches = cli().get_matches();
 
-        let pool = match database::open(&config) {
-            Ok(pool) => pool,
-            Err(e) => return Err(Error::new(&format!("Unable to open database: {}", e))),
-        };
-
-        match args.subcommand() {
-            Some((push::CMD, args)) => {
-                Push::new(
-                    args,
-                    &config,
-                    pool,
-                    Pgp::new(&config)?,
-                    store::new(&config)?,
-                    ThreadPool::new(&config),
-                )?
-                .execute();
-                Ok(())
-            }
-            Some((pull::CMD, args)) => {
-                Pull::new(args, pool).execute();
-                Ok(())
-            }
-            Some((fuse::CMD, args)) => {
-                Fuse::new(
-                    args,
-                    &config,
-                    pool,
-                    Pgp::new(&config)?,
-                    store::new(&config)?,
-                )?
-                .execute();
-                Ok(())
-            }
-            Some((export_import::export::CMD, _args)) => {
-                Export::new(pool)?.execute();
-                Ok(())
-            }
-            Some((export_import::import::CMD, _args)) => {
-                Import::new(pool)?.execute();
-                Ok(())
-            }
-            Some((cmd, _)) => Err(Error::new(&format!("Invalid command: {}", cmd))),
-            None => Err(Error::new("No command provided.")),
+    let config = match Config::new(matches.value_of("config").unwrap()) {
+        Ok(config) => config,
+        Err(e) => {
+            log::error!(
+                "unable to read config file {}: {}",
+                matches.value_of("config").unwrap(),
+                e
+            );
+            return Ok(());
         }
-    } else {
-        Err(Error::new("Unable to parse args"))
-    }
+    };
+
+    let pool = match database::open(&config) {
+        Ok(pool) => pool,
+        Err(e) => {
+            log::error!("Unable to open database: {}", e);
+
+            return Ok(());
+        }
+    };
+    let files_repository = FilesRepository::new(pool.clone());
+    let chunks_repository = ChunksRepository::new(pool.clone());
+    let fs_repository = FsRepository::new(pool);
+
+    match matches.subcommand() {
+        Some(("autocomplete", args)) => {
+            let mut cli = cli();
+            if let Ok(generator) = args.value_of_t::<Shell>("shell") {
+                let name = cli.get_name().to_string();
+                generate(generator, &mut cli, name, &mut io::stdout());
+            } else {
+                let _ = cli.print_long_help();
+            }
+        }
+        Some(("export", _args)) => {
+            export::execute(files_repository, chunks_repository);
+        }
+        Some(("mount", args)) => {
+            match mount::execute(
+                mount::Config {
+                    cache_folder: config.get_cache_folder(),
+                    mountpoint: args.value_of("mountpoint").unwrap(),
+                },
+                files_repository,
+                chunks_repository,
+                fs_repository,
+                match Pgp::new(&config) {
+                    Ok(pgp) => pgp,
+                    Err(e) => {
+                        log::error!("unable to instantiate pgp: {}", e);
+                        return Ok(());
+                    }
+                },
+                match store::new(&config) {
+                    Ok(store) => store,
+                    Err(e) => {
+                        log::error!("unable to instantiate store: {}", e);
+                        return Ok(());
+                    }
+                },
+            ) {
+                Ok(()) => {}
+                Err(e) => log::error!("Unable to mount: {}", e),
+            };
+        }
+        Some(("import", _args)) => {
+            import::execute(files_repository, chunks_repository, fs_repository);
+        }
+        Some(("push", args)) => push::execute(
+            push::Config {
+                folder: args.value_of("folder").unwrap(),
+                chunk_size: config.get_chunk_size().get_bytes() as u64,
+            },
+            files_repository,
+            chunks_repository,
+            fs_repository,
+            match Pgp::new(&config) {
+                Ok(pgp) => pgp,
+                Err(e) => {
+                    log::error!("unable to instantiate pgp: {}", e);
+                    return Ok(());
+                }
+            },
+            match store::new(&config) {
+                Ok(store) => store,
+                Err(e) => {
+                    log::error!("unable to instantiate store: {}", e);
+                    return Ok(());
+                }
+            },
+            ThreadPool::new(&config),
+        ),
+        Some((command, _)) => log::error!("Invalid command: {}", command),
+        None => log::error!("No command provided."),
+    };
+    Ok(())
+}
+
+fn cli() -> Command<'static> {
+    command!()
+        .subcommand_required(true)
+        .arg_required_else_help(true)
+        .arg(
+            Arg::new("config")
+                .help("configuration file")
+                .long("config")
+                .short('c')
+                .required(true)
+                .takes_value(true)
+                .forbid_empty_values(true),
+        )
+        .subcommand(
+            Command::new("autocomplete")
+                .about("generates autocompletion for shells")
+                .arg(
+                    Arg::new("shell")
+                        .help("the target shell")
+                        .long("shell")
+                        .short('s')
+                        .required(true)
+                        .possible_values(Shell::possible_values()),
+                ),
+        )
+        .subcommand(
+            Command::new("export").about("Exports files database to JSON (writes to stdout)"),
+        )
+        .subcommand(
+            Command::new("fuse").about("Mount database as fuse FS").arg(
+                Arg::new("mountpoint")
+                    .help("FS mountpoint")
+                    .long("mountpoint")
+                    .short('m')
+                    .required(true)
+                    .takes_value(true)
+                    .forbid_empty_values(true),
+            ),
+        )
+        .subcommand(Command::new("import").about("Imports database from JSON (reads from stdin)"))
+        .subcommand(
+            Command::new("push")
+                .about("Copy local folder to cloud")
+                .arg(
+                    Arg::new("folder")
+                        .help("local folder path")
+                        .long("folder")
+                        .short('f')
+                        .required(true)
+                        .takes_value(true)
+                        .forbid_empty_values(true),
+                ),
+        )
 }

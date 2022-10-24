@@ -100,7 +100,7 @@ impl Repository {
         {
             Ok(0) => Err(Error::new(&format!("Chunk {} not found in DB", uuid))),
             Ok(_) => Ok(()),
-            Err(e) => Err(Error::from(e)),
+            Err(e) => Err(e),
         }
     }
 

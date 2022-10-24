@@ -128,11 +128,11 @@ impl Pgp {
 
     fn get_recipients(&self) -> Vec<Recipient> {
         let mut recipients = Vec::<Recipient>::new();
-        for (_keyid, (_fingerprint, pubkey)) in &self.public_keys {
+        for (_fingerprint, pubkey) in self.public_keys.values() {
             let recipient = Recipient::from(pubkey);
             recipients.push(recipient)
         }
-        for (_keyid, (_fingerprint, keypair)) in &self.secret_keys {
+        for (_fingerprint, keypair) in self.secret_keys.values() {
             let recipient = Recipient::from(keypair.public());
             recipients.push(recipient)
         }

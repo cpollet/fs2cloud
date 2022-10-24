@@ -1,7 +1,5 @@
 use crate::database::DatabaseConfig;
-use crate::fuse::FuseConfig;
 use crate::pgp::PgpConfig;
-use crate::push::PushConfig;
 use crate::store::{StoreConfig, StoreKind};
 use crate::thread_pool::ThreadPoolConfig;
 use crate::Error;
@@ -14,6 +12,9 @@ pub struct Config {
     file: String,
     yaml: Yaml,
 }
+
+const MAX_CHUNK_SIZE: &str = "1GB";
+const DEFAULT_CHUNK_SIZE: &str = "90MB";
 
 impl Config {
     pub fn new(file: &str) -> Result<Self, Error> {
@@ -37,6 +38,20 @@ impl Config {
             }
         }
     }
+
+    pub fn get_cache_folder(&self) -> Option<&str> {
+        self.yaml["cache"].as_str()
+    }
+
+    pub fn get_chunk_size(&self) -> Byte {
+        Byte::from_str(
+            self.yaml["chunks"]["size"]
+                .as_str()
+                .unwrap_or(DEFAULT_CHUNK_SIZE),
+        )
+        .unwrap()
+        .min(Byte::from_str(MAX_CHUNK_SIZE).unwrap())
+    }
 }
 
 impl DatabaseConfig for Config {
@@ -47,20 +62,6 @@ impl DatabaseConfig for Config {
                 self.file
             ))
         })
-    }
-}
-
-const MAX_CHUNK_SIZE: &str = "1GB";
-const DEFAULT_CHUNK_SIZE: &str = "90MB";
-impl PushConfig for Config {
-    fn get_chunk_size(&self) -> Byte {
-        Byte::from_str(
-            self.yaml["chunks"]["size"]
-                .as_str()
-                .unwrap_or(DEFAULT_CHUNK_SIZE),
-        )
-        .unwrap()
-        .min(Byte::from_str(MAX_CHUNK_SIZE).unwrap())
     }
 }
 
@@ -90,12 +91,6 @@ impl ThreadPoolConfig for Config {
 
     fn get_max_queue_size(&self) -> usize {
         self.yaml["queue_size"].as_i64().unwrap_or_default().max(0) as usize
-    }
-}
-
-impl FuseConfig for Config {
-    fn get_cache_folder(&self) -> Option<&str> {
-        self.yaml["cache"].as_str()
     }
 }
 
