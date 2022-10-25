@@ -167,15 +167,17 @@ fn cli() -> Command<'static> {
             Command::new("export").about("Exports files database to JSON (writes to stdout)"),
         )
         .subcommand(
-            Command::new("fuse").about("Mount database as fuse FS").arg(
-                Arg::new("mountpoint")
-                    .help("FS mountpoint")
-                    .long("mountpoint")
-                    .short('m')
-                    .required(true)
-                    .takes_value(true)
-                    .forbid_empty_values(true),
-            ),
+            Command::new("mount")
+                .about("Mount database as fuse FS")
+                .arg(
+                    Arg::new("mountpoint")
+                        .help("FS mountpoint")
+                        .long("mountpoint")
+                        .short('m')
+                        .required(true)
+                        .takes_value(true)
+                        .forbid_empty_values(true),
+                ),
         )
         .subcommand(Command::new("import").about("Imports database from JSON (reads from stdin)"))
         .subcommand(
