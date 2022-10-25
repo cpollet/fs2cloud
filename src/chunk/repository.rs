@@ -5,14 +5,19 @@ use r2d2_sqlite::SqliteConnectionManager;
 use rusqlite::Row;
 use uuid::Uuid;
 
+// todo rename fields to better match what thy are
 #[derive(Debug)]
 pub struct Chunk {
     pub uuid: Uuid,
     pub file_uuid: Uuid,
     pub idx: u64,
+    /// the sha-256 sum of the clear text
     pub sha256: String,
+    /// offset within the clear text
     pub offset: u64,
+    /// cipher text length
     pub size: u64,
+    /// clear text length
     pub payload_size: u64,
     pub status: String,
 }

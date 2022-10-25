@@ -1,16 +1,18 @@
-use crate::chunk::completer::Completer;
 use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository};
-use crate::chunk::{Chunk, Metadata};
+use crate::chunk::{Chunk, ClearChunk, Metadata};
 use crate::file::repository::{File as DbFile, Repository as FilesRepository};
 use crate::fuse::fs::repository::Repository as FsRepository;
 use crate::store::CloudStore;
 use crate::{Pgp, ThreadPool};
 use byte_unit::Byte;
+use sha2::Digest;
+use sha2::Sha256;
 use std::fs;
 use std::fs::ReadDir;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use bincode::Options;
 use uuid::Uuid;
 
 pub struct Config<'a> {
@@ -29,10 +31,6 @@ pub fn execute(
 ) {
     let files_repository = Arc::new(files_repository);
     let chunks_repository = Arc::new(chunks_repository);
-    let completer = Arc::new(Completer::new(
-        files_repository.clone(),
-        chunks_repository.clone(),
-    ));
     Push {
         folder: config.folder,
         chunk_size: config.chunk_size,
@@ -42,7 +40,6 @@ pub fn execute(
         pgp: Arc::new(pgp),
         store: Arc::new(store),
         thread_pool,
-        completer,
     }
     .execute();
 }
@@ -56,7 +53,6 @@ struct Push<'a> {
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
     thread_pool: ThreadPool,
-    completer: Arc<Completer>,
 }
 
 impl<'a> Push<'a> {
@@ -258,18 +254,15 @@ impl<'a> Push<'a> {
             }
         }
 
-        let chunk = Chunk::new(
+        let chunk = ClearChunk::new(
             chunk.uuid,
-            Metadata {
-                file: file.path.clone(),
-                idx: chunk.idx,
-                total: file.chunks,
-            },
+            Metadata::new(file.path.clone(), chunk.idx, file.chunks),
             data,
         );
         let pgp = self.pgp.clone();
         let store = self.store.clone();
-        let completer = self.completer.clone();
+        let files_repository = self.files_repository.clone();
+        let chunks_repository = self.chunks_repository.clone();
 
         self.thread_pool.execute(move || {
             let chunk = match chunk.encrypt(&pgp) {
@@ -280,12 +273,13 @@ impl<'a> Push<'a> {
                 }
             };
 
-            if let Err(e) = chunk.push(store) {
-                log::error!("{}", e);
-                return;
-            };
-
-            completer.complete(chunk);
+            match chunk
+                .push(store)
+                .and_then(|c| c.finalize(files_repository, chunks_repository))
+            {
+                Err(e) => log::error!("{}", e),
+                Ok(chunk) => log::info!("{} done", chunk.metadata().file()),
+            }
         });
     }
 }

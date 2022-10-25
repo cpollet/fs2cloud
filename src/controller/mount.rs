@@ -1,5 +1,5 @@
 use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository};
-use crate::chunk::Chunk;
+use crate::chunk::{Chunk, EncryptedChunk, RemoteEncryptedChunk};
 use crate::file::repository::Repository as FilesRepository;
 use crate::fuse::fs::repository::{Inode, Repository as FsRepository};
 use crate::store::CloudStore;
@@ -12,7 +12,7 @@ use libc::{ENOENT, SIGINT};
 use signal_hook::iterator::Signals;
 use std::ffi::OsStr;
 use std::fs::OpenOptions;
-use std::io::{Cursor, Read, Write};
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
@@ -179,9 +179,9 @@ impl Filesystem for Fs2CloudFS {
             }
 
             match self.read_from_store(&chunk) {
-                Ok(Chunk { payload: bytes, .. }) => {
-                    log::trace!("read(ino:{}) -> decrypted {} bytes", ino, bytes.len());
-                    data.write_all(bytes.as_slice()).unwrap()
+                Ok(payload) => {
+                    log::trace!("read(ino:{}) -> decrypted {} bytes", ino, payload.len());
+                    data.write_all(payload.as_slice()).unwrap()
                 }
                 Err(e) => {
                     log::error!("read(ino:{}) -> error: {}", ino, e);
@@ -238,48 +238,26 @@ impl Filesystem for Fs2CloudFS {
 }
 
 impl Fs2CloudFS {
-    fn read_from_store(&self, chunk: &DbChunk) -> Result<Chunk, Error> {
+    fn read_from_store(&self, chunk: &DbChunk) -> Result<Vec<u8>, Error> {
         self.read_from_cache_or_store(&chunk.uuid)
             .map(Ok)
             .unwrap_or_else(|| {
                 log::debug!("Read chunk {} from store", chunk.uuid);
-                self.store.get(chunk.uuid).and_then(|cipher_bytes| {
-                    let mut clear_bytes = Vec::with_capacity(chunk.payload_size as usize);
-                    match self
-                        .pgp
-                        .decrypt(Cursor::new(cipher_bytes), &mut clear_bytes)
-                    {
-                        Ok(_) => {
-                            self.write_to_cache(&chunk.uuid, clear_bytes.as_slice());
-                            Ok(Self::deserialize_chunk(clear_bytes))
-                        }
-                        Err(e) => Err(e),
-                    }
-                })
+                let chunk =
+                    RemoteEncryptedChunk::from(self.store.get(chunk.uuid)?).decrypt(&self.pgp)?;
+                self.write_to_cache(&chunk.uuid(), chunk.payload());
+                Ok(chunk.payload().into())
             })
     }
 
-    fn deserialize_chunk(data: Vec<u8>) -> Chunk {
-        let chunk = Chunk::try_from(&data).unwrap();
-        log::debug!(
-            "{}: deserialized chunk {}/{}",
-            chunk.metadata.file,
-            chunk.metadata.idx + 1,
-            chunk.metadata.total,
-        );
-        chunk
-    }
-
-    fn read_from_cache_or_store(&self, chunk: &Uuid) -> Option<Chunk> {
+    fn read_from_cache_or_store(&self, chunk: &Uuid) -> Option<Vec<u8>> {
         self.cache
             .as_ref()
             .map(|path| path.join(Path::new(&chunk.to_string())))
             .and_then(|path| OpenOptions::new().read(true).open(path).ok())
             .and_then(|mut file| {
                 let mut bytes = Vec::new();
-                file.read_to_end(&mut bytes)
-                    .ok()
-                    .map(|_| Self::deserialize_chunk(bytes))
+                file.read_to_end(&mut bytes).ok().map(|_| bytes)
             })
     }
 
