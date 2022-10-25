@@ -1,9 +1,11 @@
+use crate::hash::ChunkedSha256;
 use crate::store::CloudStore;
 use crate::{ChunksRepository, Error, FilesRepository, Pgp};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::collections::HashMap;
 use std::io::Cursor;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 pub mod repository;
@@ -158,7 +160,22 @@ impl LocalEncryptedChunk {
         &self,
         files_repository: Arc<FilesRepository>,
         chunks_repository: Arc<ChunksRepository>,
+        hashes: Arc<Mutex<HashMap<Uuid, ChunkedSha256>>>,
     ) -> Result<&Self, Error> {
+        fn get_hasher(
+            uuid: &Uuid,
+            hashes: &Arc<Mutex<HashMap<Uuid, ChunkedSha256>>>,
+        ) -> ChunkedSha256 {
+            loop {
+                // todo refactor to avoid busy waiting
+                let hasher = { hashes.lock().unwrap().remove(uuid) };
+                if let Some(hasher) = hasher {
+                    return hasher;
+                }
+                log::warn!("try again");
+            }
+        }
+
         if let Err(e) = chunks_repository.mark_done(
             &self.uuid(),
             &self.chunk.sha256(),
@@ -178,19 +195,40 @@ impl LocalEncryptedChunk {
                 self.metadata().file,
                 e
             ))),
-            Ok(chunks) if chunks.is_empty() => Ok(self),
+            Ok(chunks) if chunks.is_empty() => Err(Error::new(&format!(
+                "{} unable to finalize",
+                self.metadata().file,
+            ))),
             Ok(chunks) => {
+                let file_uuid = chunks.get(0).map(|chunk| chunk.file_uuid).unwrap();
+
+                let mut hasher = get_hasher(&file_uuid, &hashes);
+                hasher.update(self.chunk.payload.as_slice(), self.chunk.metadata.idx);
+
                 if chunks.iter().filter(|chunk| chunk.status != "DONE").count() == 0 {
-                    let file_uuid = chunks.get(0).map(|chunk| &chunk.file_uuid).unwrap();
-                    match files_repository.mark_done(file_uuid, "") {
+                    let sha256 = loop {
+                        // todo refactor to avoid busy waiting
+                        match hasher.finalize() {
+                            None => {
+                                log::warn!("try again");
+                            }
+                            Some(sha256) => break sha256,
+                        }
+                    };
+
+                    match files_repository.mark_done(&file_uuid, &sha256) {
                         Err(e) => Err(Error::new(&format!(
                             "{} unable to finalize: {}",
                             self.metadata().file,
                             e
                         ))),
-                        Ok(_) => Ok(self),
+                        Ok(_) => {
+                            log::info!("{} done", self.metadata().file);
+                            Ok(self)
+                        }
                     }
                 } else {
+                    hashes.lock().unwrap().insert(file_uuid, hasher);
                     Ok(self)
                 }
             }

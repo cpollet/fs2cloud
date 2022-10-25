@@ -2,17 +2,16 @@ use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository}
 use crate::chunk::{Chunk, ClearChunk, Metadata};
 use crate::file::repository::{File as DbFile, Repository as FilesRepository};
 use crate::fuse::fs::repository::Repository as FsRepository;
+use crate::hash::ChunkedSha256;
 use crate::store::CloudStore;
 use crate::{Pgp, ThreadPool};
 use byte_unit::Byte;
-use sha2::Digest;
-use sha2::Sha256;
+use std::collections::HashMap;
 use std::fs;
 use std::fs::ReadDir;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use bincode::Options;
+use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
 pub struct Config<'a> {
@@ -40,6 +39,7 @@ pub fn execute(
         pgp: Arc::new(pgp),
         store: Arc::new(store),
         thread_pool,
+        hashes: Arc::new(Mutex::new(HashMap::new())),
     }
     .execute();
 }
@@ -53,6 +53,7 @@ struct Push<'a> {
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
     thread_pool: ThreadPool,
+    hashes: Arc<Mutex<HashMap<Uuid, ChunkedSha256>>>,
 }
 
 impl<'a> Push<'a> {
@@ -254,6 +255,14 @@ impl<'a> Push<'a> {
             }
         }
 
+        {
+            self.hashes
+                .lock()
+                .unwrap()
+                .entry(file.uuid)
+                .or_insert_with(ChunkedSha256::new);
+        }
+
         let chunk = ClearChunk::new(
             chunk.uuid,
             Metadata::new(file.path.clone(), chunk.idx, file.chunks),
@@ -263,6 +272,7 @@ impl<'a> Push<'a> {
         let store = self.store.clone();
         let files_repository = self.files_repository.clone();
         let chunks_repository = self.chunks_repository.clone();
+        let hashes = self.hashes.clone();
 
         self.thread_pool.execute(move || {
             let chunk = match chunk.encrypt(&pgp) {
@@ -275,10 +285,10 @@ impl<'a> Push<'a> {
 
             match chunk
                 .push(store)
-                .and_then(|c| c.finalize(files_repository, chunks_repository))
+                .and_then(|c| c.finalize(files_repository, chunks_repository, hashes))
             {
                 Err(e) => log::error!("{}", e),
-                Ok(chunk) => log::info!("{} done", chunk.metadata().file()),
+                Ok(chunk) => {}
             }
         });
     }
