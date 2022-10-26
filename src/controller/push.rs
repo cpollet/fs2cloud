@@ -39,7 +39,7 @@ pub fn execute(
         pgp: Arc::new(pgp),
         store: Arc::new(store),
         thread_pool,
-        hashes: Arc::new(Mutex::new(HashMap::new())),
+        hashes: HashMap::new(),
     }
     .execute();
 }
@@ -53,11 +53,11 @@ struct Push<'a> {
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
     thread_pool: ThreadPool,
-    hashes: Arc<Mutex<HashMap<Uuid, ChunkedSha256>>>,
+    hashes: HashMap<Uuid,Arc<Mutex<ChunkedSha256>>>,
 }
 
 impl<'a> Push<'a> {
-    fn execute(&self) {
+    fn execute(&mut self) {
         log::info!("Scanning files in `{}`...", self.folder);
 
         match fs::read_dir(self.folder) {
@@ -219,7 +219,7 @@ impl<'a> Push<'a> {
         }
     }
 
-    fn process_chunk(&self, source: &mut fs::File, file: &DbFile, chunk: &DbChunk) {
+    fn process_chunk(&mut self, source: &mut fs::File, file: &DbFile, chunk: &DbChunk) {
         if let Err(e) = source.seek(SeekFrom::Start(chunk.offset)) {
             log::error!(
                 "Error seeking to chunk {} of {}: {}",
@@ -255,13 +255,7 @@ impl<'a> Push<'a> {
             }
         }
 
-        {
-            self.hashes
-                .lock()
-                .unwrap()
-                .entry(file.uuid)
-                .or_insert_with(ChunkedSha256::new);
-        }
+        self.hashes.entry(file.uuid).or_insert_with(|| Arc::new(Mutex::new(ChunkedSha256::new())));
 
         let chunk = ClearChunk::new(
             chunk.uuid,
@@ -272,7 +266,7 @@ impl<'a> Push<'a> {
         let store = self.store.clone();
         let files_repository = self.files_repository.clone();
         let chunks_repository = self.chunks_repository.clone();
-        let hashes = self.hashes.clone();
+        let hash = self.hashes.get(&file.uuid).unwrap().clone();
 
         self.thread_pool.execute(move || {
             let chunk = match chunk.encrypt(&pgp) {
@@ -285,7 +279,7 @@ impl<'a> Push<'a> {
 
             if let Err(e) = chunk
                 .push(store)
-                .and_then(|c| c.finalize(files_repository, chunks_repository, hashes))
+                .and_then(|c| c.finalize(files_repository, chunks_repository, hash))
             {
                 log::error!("{}", e)
             }

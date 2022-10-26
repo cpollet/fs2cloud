@@ -3,7 +3,6 @@ use crate::store::CloudStore;
 use crate::{ChunksRepository, Error, FilesRepository, Pgp};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
-use std::collections::HashMap;
 use std::io::Cursor;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
@@ -160,22 +159,8 @@ impl LocalEncryptedChunk {
         &self,
         files_repository: Arc<FilesRepository>,
         chunks_repository: Arc<ChunksRepository>,
-        hashes: Arc<Mutex<HashMap<Uuid, ChunkedSha256>>>,
+        hash: Arc<Mutex<ChunkedSha256>>,
     ) -> Result<&Self, Error> {
-        fn get_hasher(
-            uuid: &Uuid,
-            hashes: &Arc<Mutex<HashMap<Uuid, ChunkedSha256>>>,
-        ) -> ChunkedSha256 {
-            loop {
-                // todo refactor to avoid busy waiting
-                let hasher = { hashes.lock().unwrap().remove(uuid) };
-                if let Some(hasher) = hasher {
-                    return hasher;
-                }
-                log::warn!("try again");
-            }
-        }
-
         if let Err(e) = chunks_repository.mark_done(
             &self.uuid(),
             &self.chunk.sha256(),
@@ -202,18 +187,16 @@ impl LocalEncryptedChunk {
             Ok(chunks) => {
                 let file_uuid = chunks.get(0).map(|chunk| chunk.file_uuid).unwrap();
 
-                let mut hasher = get_hasher(&file_uuid, &hashes);
-                hasher.update(self.chunk.payload.as_slice(), self.chunk.metadata.idx);
+                let mut hash = hash.lock().unwrap();
+                hash.update(self.chunk.payload.as_slice(), self.chunk.metadata.idx);
 
                 if chunks.iter().filter(|chunk| chunk.status != "DONE").count() == 0 {
-                    let sha256 = loop {
-                        // todo refactor to avoid busy waiting
-                        match hasher.finalize() {
-                            None => {
-                                log::warn!("try again");
-                            }
-                            Some(sha256) => break sha256,
+                    let sha256 = match hash.finalize() {
+                        None => {
+                            log::error!("{} could not compute sha256", self.chunk.metadata.file);
+                            "".to_string()
                         }
+                        Some(sha256) => sha256,
                     };
 
                     match files_repository.mark_done(&file_uuid, &sha256) {
@@ -228,7 +211,6 @@ impl LocalEncryptedChunk {
                         }
                     }
                 } else {
-                    hashes.lock().unwrap().insert(file_uuid, hasher);
                     Ok(self)
                 }
             }
