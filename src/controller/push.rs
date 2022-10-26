@@ -1,5 +1,5 @@
 use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository};
-use crate::chunk::{Chunk, ClearChunk, Metadata};
+use crate::chunk::{ClearChunk, Metadata};
 use crate::file::repository::{File as DbFile, Repository as FilesRepository};
 use crate::fuse::fs::repository::Repository as FsRepository;
 use crate::hash::ChunkedSha256;
@@ -283,12 +283,11 @@ impl<'a> Push<'a> {
                 }
             };
 
-            match chunk
+            if let Err(e) = chunk
                 .push(store)
                 .and_then(|c| c.finalize(files_repository, chunks_repository, hashes))
             {
-                Err(e) => log::error!("{}", e),
-                Ok(chunk) => {}
+                log::error!("{}", e)
             }
         });
     }

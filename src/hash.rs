@@ -9,11 +9,7 @@ pub struct ChunkedSha256 {
 
 impl ChunkedSha256 {
     pub fn new() -> Self {
-        Self {
-            next_block: 0,
-            hasher: Sha256::new(),
-            pending_blocks: HashMap::new(),
-        }
+        Self::default()
     }
 
     pub fn update(&mut self, data: &[u8], block_index: u64) {
@@ -34,6 +30,16 @@ impl ChunkedSha256 {
             Some(format!("{:x}", self.hasher.finalize_reset()))
         } else {
             None
+        }
+    }
+}
+
+impl Default for ChunkedSha256 {
+    fn default() -> Self {
+        Self {
+            next_block: 0,
+            hasher: Sha256::new(),
+            pending_blocks: HashMap::new(),
         }
     }
 }
