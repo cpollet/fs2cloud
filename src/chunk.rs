@@ -1,9 +1,11 @@
 use crate::hash::ChunkedSha256;
+use crate::metrics::Metric;
 use crate::store::CloudStore;
 use crate::{ChunksRepository, Error, FilesRepository, Pgp};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::io::Cursor;
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
 
@@ -160,6 +162,7 @@ impl LocalEncryptedChunk {
         files_repository: Arc<FilesRepository>,
         chunks_repository: Arc<ChunksRepository>,
         hash: Arc<Mutex<ChunkedSha256>>,
+        sender: &Sender<Metric>,
     ) -> Result<&Self, Error> {
         if let Err(e) = chunks_repository.mark_done(
             &self.uuid(),
@@ -198,6 +201,7 @@ impl LocalEncryptedChunk {
                         }
                         Some(sha256) => sha256,
                     };
+                    let _ = sender.send(Metric::FileProcessed);
 
                     match files_repository.mark_done(&file_uuid, &sha256) {
                         Err(e) => Err(Error::new(&format!(

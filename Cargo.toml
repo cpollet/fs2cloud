@@ -26,12 +26,12 @@ sequoia-openpgp = "1.9.0"
 serde = "1.0.137"
 serde_json = "1.0.81"
 sha2 = "0.10.2"
-#sha256 = "1.0.3"
 signal-hook = "0.3.14"
 time = "0.3.9"
 uuid = { version = "1.1.1", features = ["v4", "fast-rng"] }
 yaml-rust = "0.4.5"
 bincode = "1.3.3"
+chrono = "0.4.22"
 
 [dev-dependencies]
 rand = "0.8.5"

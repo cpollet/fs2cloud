@@ -1,17 +1,20 @@
 use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository};
-use crate::chunk::{ClearChunk, Metadata};
+use crate::chunk::{Chunk, ClearChunk, Metadata};
 use crate::file::repository::{File as DbFile, Repository as FilesRepository};
 use crate::fuse::fs::repository::Repository as FsRepository;
 use crate::hash::ChunkedSha256;
+use crate::metrics::{Collector, Metric};
 use crate::store::CloudStore;
-use crate::{Pgp, ThreadPool};
+use crate::{metrics, Pgp, ThreadPool};
 use byte_unit::Byte;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::ReadDir;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 pub struct Config<'a> {
@@ -40,6 +43,7 @@ pub fn execute(
         store: Arc::new(store),
         thread_pool,
         hashes: HashMap::new(),
+        collector: Collector::new(),
     }
     .execute();
 }
@@ -53,7 +57,8 @@ struct Push<'a> {
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn CloudStore>>,
     thread_pool: ThreadPool,
-    hashes: HashMap<Uuid,Arc<Mutex<ChunkedSha256>>>,
+    hashes: HashMap<Uuid, Arc<Mutex<ChunkedSha256>>>,
+    collector: Collector,
 }
 
 impl<'a> Push<'a> {
@@ -255,7 +260,9 @@ impl<'a> Push<'a> {
             }
         }
 
-        self.hashes.entry(file.uuid).or_insert_with(|| Arc::new(Mutex::new(ChunkedSha256::new())));
+        self.hashes
+            .entry(file.uuid)
+            .or_insert_with(|| Arc::new(Mutex::new(ChunkedSha256::new())));
 
         let chunk = ClearChunk::new(
             chunk.uuid,
@@ -267,8 +274,10 @@ impl<'a> Push<'a> {
         let files_repository = self.files_repository.clone();
         let chunks_repository = self.chunks_repository.clone();
         let hash = self.hashes.get(&file.uuid).unwrap().clone();
+        let sender = self.collector.sender();
 
         self.thread_pool.execute(move || {
+            let bytes = chunk.payload().len() as u64;
             let chunk = match chunk.encrypt(&pgp) {
                 Ok(cipher) => cipher,
                 Err(e) => {
@@ -279,9 +288,12 @@ impl<'a> Push<'a> {
 
             if let Err(e) = chunk
                 .push(store)
-                .and_then(|c| c.finalize(files_repository, chunks_repository, hash))
+                .and_then(|c| c.finalize(files_repository, chunks_repository, hash, &sender))
             {
                 log::error!("{}", e)
+            } else {
+                let _ = sender.send(Metric::ChunkProcessed);
+                let _ = sender.send(Metric::BytesProcessed(bytes));
             }
         });
     }

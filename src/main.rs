@@ -22,6 +22,7 @@ mod error;
 mod file;
 mod fuse;
 mod hash;
+mod metrics;
 mod pgp;
 mod store;
 mod thread_pool;
