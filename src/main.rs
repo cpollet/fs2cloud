@@ -9,9 +9,12 @@ use crate::error::Error;
 use crate::file::repository::Repository as FilesRepository;
 use crate::fuse::fs::repository::Repository as FsRepository;
 use crate::pgp::Pgp;
+use crate::store::Store;
 use crate::thread_pool::ThreadPool;
 use clap::{command, Arg, Command};
 use clap_complete::{generate, Shell};
+use r2d2::Pool;
+use r2d2_sqlite::SqliteConnectionManager;
 use std::io;
 
 mod chunk;
@@ -37,7 +40,7 @@ fn main() {
     })
 }
 
-fn run() -> Result<(), String> {
+fn run() -> Result<(), Error> {
     pretty_env_logger::init();
 
     let matches = cli().get_matches();
@@ -54,14 +57,7 @@ fn run() -> Result<(), String> {
         }
     };
 
-    let pool = match database::open(&config) {
-        Ok(pool) => pool,
-        Err(e) => {
-            log::error!("Unable to open database: {}", e);
-
-            return Ok(());
-        }
-    };
+    let pool = Pool::<SqliteConnectionManager>::try_from(&config)?;
     let files_repository = FilesRepository::new(pool.clone());
     let chunks_repository = ChunksRepository::new(pool.clone());
     let fs_repository = FsRepository::new(pool);
@@ -80,7 +76,7 @@ fn run() -> Result<(), String> {
             export::execute(files_repository, chunks_repository);
         }
         Some(("mount", args)) => {
-            match mount::execute(
+            mount::execute(
                 mount::Config {
                     cache_folder: config.get_cache_folder(),
                     mountpoint: args.value_of("mountpoint").unwrap(),
@@ -88,24 +84,9 @@ fn run() -> Result<(), String> {
                 files_repository,
                 chunks_repository,
                 fs_repository,
-                match Pgp::new(&config) {
-                    Ok(pgp) => pgp,
-                    Err(e) => {
-                        log::error!("unable to instantiate pgp: {}", e);
-                        return Ok(());
-                    }
-                },
-                match store::new(&config) {
-                    Ok(store) => store,
-                    Err(e) => {
-                        log::error!("unable to instantiate store: {}", e);
-                        return Ok(());
-                    }
-                },
-            ) {
-                Ok(()) => {}
-                Err(e) => log::error!("Unable to mount: {}", e),
-            };
+                Pgp::try_from(&config)?,
+                Box::<dyn Store>::try_from(&config)?,
+            )?;
         }
         Some(("import", _args)) => {
             import::execute(files_repository, chunks_repository, fs_repository);
@@ -118,25 +99,13 @@ fn run() -> Result<(), String> {
             files_repository,
             chunks_repository,
             fs_repository,
-            match Pgp::new(&config) {
-                Ok(pgp) => pgp,
-                Err(e) => {
-                    log::error!("unable to instantiate pgp: {}", e);
-                    return Ok(());
-                }
-            },
-            match store::new(&config) {
-                Ok(store) => store,
-                Err(e) => {
-                    log::error!("unable to instantiate store: {}", e);
-                    return Ok(());
-                }
-            },
-            ThreadPool::new(&config),
+            Pgp::try_from(&config)?,
+            Box::<dyn Store>::try_from(&config)?,
+            ThreadPool::new(config.get_max_workers_count(), config.get_max_queue_size()),
         ),
         Some((command, _)) => log::error!("Invalid command: {}", command),
         None => log::error!("No command provided."),
-    };
+    }
     Ok(())
 }
 

@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::Config;
 use sequoia_openpgp::cert::prelude::ValidErasedKeyAmalgamation;
 use sequoia_openpgp::crypto::{KeyPair, SessionKey};
 use sequoia_openpgp::packet::key::{PublicParts, SecretParts, UnspecifiedRole};
@@ -24,26 +25,20 @@ pub struct Pgp {
     policy: Box<dyn Policy>,
 }
 
-pub trait PgpConfig {
-    fn get_pgp_key(&self) -> Result<&str, Error>;
-    fn get_pgp_armor(&self) -> bool;
-    fn get_pgp_passphrase(&self) -> Option<&str>;
-}
-
 impl Pgp {
-    pub fn new(config: &dyn PgpConfig) -> Result<Self, Error> {
-        Self::new_internal(config).map_err(|e| Error::new(&format!("Error configuring PGP: {}", e)))
+    pub fn new(key: &str, passphrase: Option<&str>, ascii_armor: bool) -> Result<Self, Error> {
+        Self::new_internal(key, passphrase, ascii_armor)
+            .map_err(|e| Error::new(&format!("Error configuring PGP: {}", e)))
     }
 
-    fn new_internal(config: &dyn PgpConfig) -> Result<Self, Error> {
+    fn new_internal(key: &str, passphrase: Option<&str>, ascii_armor: bool) -> Result<Self, Error> {
         let policy = StandardPolicy::new();
         let mode = KeyFlags::empty()
             .set_transport_encryption()
             .set_storage_encryption();
-        let cert = Cert::from_file(config.get_pgp_key()?)?;
+        let cert = Cert::from_file(key)?;
         let cert = cert.with_policy(&policy, None)?;
 
-        let passphrase = config.get_pgp_passphrase();
         let mut public_keys = HashMap::new();
         let mut secret_keys = HashMap::new();
         let keys = cert
@@ -78,7 +73,7 @@ impl Pgp {
         Ok(Pgp {
             public_keys,
             secret_keys,
-            ascii_armor: config.get_pgp_armor(),
+            ascii_armor,
             policy: Box::new(policy),
         })
     }
@@ -162,6 +157,7 @@ impl VerificationHelper for &Pgp {
         Ok(())
     }
 }
+
 impl DecryptionHelper for &Pgp {
     fn decrypt<D>(
         &mut self,
@@ -190,5 +186,20 @@ impl DecryptionHelper for &Pgp {
         }
 
         Ok(recipient)
+    }
+}
+
+impl TryFrom<&Config> for Pgp {
+    type Error = Error;
+
+    fn try_from(config: &Config) -> Result<Self, Self::Error> {
+        match Pgp::new(
+            config.get_pgp_key()?,
+            config.get_pgp_passphrase(),
+            config.get_pgp_armor(),
+        ) {
+            Ok(pgp) => Ok(pgp),
+            Err(e) => Err(Error::new(&format!("unable to instantiate pgp: {}", e))),
+        }
     }
 }

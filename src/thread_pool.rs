@@ -3,14 +3,9 @@ use std::thread;
 use std::thread::JoinHandle;
 
 pub struct ThreadPool {
-    max_workers: usize,
-    workers: Vec<Worker>,
+    workers: usize,
+    worker_threads: Vec<Worker>,
     sender: mpsc::SyncSender<Message>,
-}
-
-pub trait ThreadPoolConfig {
-    fn get_max_workers_count(&self) -> usize;
-    fn get_max_queue_size(&self) -> usize;
 }
 
 struct Worker {
@@ -24,21 +19,20 @@ enum Message {
 }
 
 impl ThreadPool {
-    pub fn new(config: &dyn ThreadPoolConfig) -> Self {
-        let max_workers = config.get_max_workers_count();
-        log::debug!("init with {} {}", max_workers, config.get_max_queue_size());
+    pub fn new(workers: usize, max_queue_size: usize) -> Self {
+        log::debug!("init with {} {}", workers, max_queue_size);
 
-        let (sender, receiver) = mpsc::sync_channel(config.get_max_queue_size());
+        let (sender, receiver) = mpsc::sync_channel(max_queue_size);
         let receiver = Arc::new(Mutex::new(receiver));
 
-        let mut workers = Vec::with_capacity(max_workers);
-        for i in 0..max_workers {
-            workers.push(Worker::new(i, receiver.clone()))
+        let mut worker_threads = Vec::with_capacity(workers);
+        for i in 0..workers {
+            worker_threads.push(Worker::new(i, receiver.clone()))
         }
 
         Self {
-            max_workers,
             workers,
+            worker_threads,
             sender,
         }
     }
@@ -55,10 +49,10 @@ impl ThreadPool {
 impl Drop for ThreadPool {
     fn drop(&mut self) {
         log::debug!("drop");
-        for _ in 0..self.max_workers {
+        for _ in 0..self.workers {
             self.sender.send(Message::End).unwrap();
         }
-        self.workers.iter_mut().for_each(|w| {
+        self.worker_threads.iter_mut().for_each(|w| {
             if let Some(t) = w.t.take() {
                 t.join().unwrap();
             }
@@ -99,21 +93,9 @@ mod tests {
     use rand::Rng;
     use std::time::Duration;
 
-    struct Config {}
-    impl ThreadPoolConfig for Config {
-        fn get_max_workers_count(&self) -> usize {
-            4
-        }
-
-        fn get_max_queue_size(&self) -> usize {
-            2
-        }
-    }
-
     #[test]
     fn it_works() {
-        let config = Config {};
-        let p = ThreadPool::new(&config);
+        let p = ThreadPool::new(4, 2);
         println!("job1:queue");
         p.execute(|| {
             let mut rand = rand::thread_rng();
