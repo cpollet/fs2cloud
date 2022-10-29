@@ -7,6 +7,7 @@ use sha2::Digest;
 use std::io::Cursor;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
+use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 pub mod repository;
@@ -144,8 +145,8 @@ pub struct LocalEncryptedChunk {
 }
 
 impl LocalEncryptedChunk {
-    pub fn push(&self, store: Arc<Box<dyn Store>>) -> Result<&Self, Error> {
-        if let Err(e) = store.put(self.chunk.uuid, self.payload.as_slice()) {
+    pub fn push(&self, store: Arc<Box<dyn Store>>, runtime: Arc<Runtime>) -> Result<&Self, Error> {
+        if let Err(e) = runtime.block_on(store.put(self.chunk.uuid, self.payload.as_slice())){
             Err(Error::new(&format!(
                 "{}: unable to upload chunk {}: {}",
                 self.chunk.metadata.file.clone(),

@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use crate::error::Error;
 use crate::store::Store;
 use awscreds::Credentials;
@@ -30,8 +31,9 @@ impl S3 {
     }
 }
 
+#[async_trait]
 impl Store for S3 {
-    fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
+    async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
         log::debug!("start upload of {}", object_id);
         let (_, code) = self.bucket.put_object(Self::path(object_id), data)?;
         match code {
@@ -44,7 +46,7 @@ impl Store for S3 {
         }
     }
 
-    fn get(&self, _object_id: Uuid) -> Result<Vec<u8>, Error> {
+    async fn get(&self, _object_id: Uuid) -> Result<Vec<u8>, Error> {
         todo!()
     }
 }

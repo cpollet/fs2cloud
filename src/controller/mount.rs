@@ -16,6 +16,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
+use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 pub struct Config<'a> {
@@ -30,6 +31,7 @@ pub fn execute(
     fs_repository: FsRepository,
     pgp: Pgp,
     store: Box<dyn Store>,
+    runtime: Runtime,
 ) -> Result<(), Error> {
     let options = vec![MountOption::RO, MountOption::FSName("fs2cloud".to_string())];
 
@@ -44,6 +46,7 @@ pub fn execute(
         chunks_repository,
         pgp: Arc::new(pgp),
         store: Arc::new(store),
+        runtime: Arc::new(runtime),
     };
 
     let fs_handle = match fuser::spawn_mount2(fs, PathBuf::from(config.mountpoint), &options) {
@@ -69,6 +72,7 @@ struct Fs2CloudFS {
     chunks_repository: ChunksRepository,
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn Store>>,
+    runtime: Arc<Runtime>,
 }
 
 const TTL: Duration = Duration::from_secs(1);
@@ -244,7 +248,7 @@ impl Fs2CloudFS {
             .unwrap_or_else(|| {
                 log::debug!("Read chunk {} from store", chunk.uuid);
                 let chunk =
-                    RemoteEncryptedChunk::from(self.store.get(chunk.uuid)?).decrypt(&self.pgp)?;
+                    RemoteEncryptedChunk::from(self.runtime.block_on(self.store.get(chunk.uuid))         ?).decrypt(&self.pgp)?;
                 self.write_to_cache(&chunk.uuid(), chunk.payload());
                 Ok(chunk.payload().into())
             })

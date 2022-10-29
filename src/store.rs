@@ -3,15 +3,17 @@ use crate::store::log::Log;
 use crate::store::s3::S3;
 use crate::{Config, Error};
 use uuid::Uuid;
+use async_trait::async_trait;
 
 pub mod local;
 pub mod log;
 pub mod s3;
 
+#[async_trait]
 pub trait Store: Send + Sync {
-    fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error>;
+    async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error>;
 
-    fn get(&self, object_id: Uuid) -> Result<Vec<u8>, Error>;
+    async fn get(&self, object_id: Uuid) -> Result<Vec<u8>, Error>;
 }
 
 pub enum StoreKind {

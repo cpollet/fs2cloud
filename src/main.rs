@@ -16,6 +16,7 @@ use clap_complete::{generate, Shell};
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
 use std::io;
+use tokio::runtime::Builder;
 
 mod chunk;
 mod config;
@@ -86,6 +87,7 @@ fn run() -> Result<(), Error> {
                 fs_repository,
                 Pgp::try_from(&config)?,
                 Box::<dyn Store>::try_from(&config)?,
+                Builder::new_current_thread().enable_all().build()?,
             )?;
         }
         Some(("import", _args)) => {
@@ -102,6 +104,7 @@ fn run() -> Result<(), Error> {
             Pgp::try_from(&config)?,
             Box::<dyn Store>::try_from(&config)?,
             ThreadPool::new(config.get_max_workers_count(), config.get_max_queue_size()),
+            Builder::new_current_thread().enable_all().build()?,
         ),
         Some((command, _)) => log::error!("Invalid command: {}", command),
         None => log::error!("No command provided."),

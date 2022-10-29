@@ -4,6 +4,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use async_trait::async_trait;
 use uuid::Uuid;
 
 pub struct Local {
@@ -19,8 +20,9 @@ impl Local {
     }
 }
 
+#[async_trait]
 impl Store for Local {
-    fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
+    async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
         let mut path = PathBuf::from(self.path.as_path());
         path.push(object_id.to_string());
 
@@ -30,7 +32,7 @@ impl Store for Local {
         file.write_all(data).map_err(Error::from)
     }
 
-    fn get(&self, object_id: Uuid) -> Result<Vec<u8>, Error> {
+    async fn get(&self, object_id: Uuid) -> Result<Vec<u8>, Error> {
         let mut path = PathBuf::from(self.path.as_path());
         path.push(object_id.to_string());
 

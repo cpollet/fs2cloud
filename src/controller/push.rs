@@ -13,6 +13,7 @@ use std::fs::ReadDir;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 pub struct Config<'a> {
@@ -28,6 +29,7 @@ pub fn execute(
     pgp: Pgp,
     store: Box<dyn Store>,
     thread_pool: ThreadPool,
+    runtime: Runtime
 ) {
     let files_repository = Arc::new(files_repository);
     let chunks_repository = Arc::new(chunks_repository);
@@ -42,6 +44,7 @@ pub fn execute(
         thread_pool,
         hashes: HashMap::new(),
         collector: Collector::new(),
+        runtime: Arc::new(runtime),
     }
     .execute();
 }
@@ -57,6 +60,7 @@ struct Push<'a> {
     thread_pool: ThreadPool,
     hashes: HashMap<Uuid, Arc<Mutex<ChunkedSha256>>>,
     collector: Collector,
+    runtime: Arc<Runtime>,
 }
 
 impl<'a> Push<'a> {
@@ -301,6 +305,7 @@ impl<'a> Push<'a> {
         let chunks_repository = self.chunks_repository.clone();
         let hash = self.hashes.get(&file.uuid).unwrap().clone();
         let sender = self.collector.sender();
+        let runtime = self.runtime.clone();
 
         self.thread_pool.execute(move || {
             let bytes = chunk.payload().len() as u64;
@@ -313,7 +318,7 @@ impl<'a> Push<'a> {
             };
 
             if let Err(e) = chunk
-                .push(store)
+                .push(store, runtime)
                 .and_then(|c| c.finalize(files_repository, chunks_repository, hash, &sender))
             {
                 log::error!("{}", e)
