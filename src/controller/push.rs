@@ -5,16 +5,14 @@ use crate::fuse::fs::repository::Repository as FsRepository;
 use crate::hash::ChunkedSha256;
 use crate::metrics::{Collector, Metric};
 use crate::store::CloudStore;
-use crate::{metrics, Pgp, ThreadPool};
+use crate::{Pgp, ThreadPool};
 use byte_unit::Byte;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::ReadDir;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 pub struct Config<'a> {
@@ -72,6 +70,34 @@ impl<'a> Push<'a> {
             }
             Ok(dir) => self.visit_dir(&PathBuf::from(self.folder), dir),
         }
+
+        let _ = self.collector.sender().send(Metric::ChunksTotal(
+            match self.chunks_repository.count_by_status("PENDING") {
+                Ok(count) => count,
+                Err(e) => {
+                    log::warn!("unable to fetch total chunks count: {}", e);
+                    0
+                }
+            },
+        ));
+        let _ = self.collector.sender().send(Metric::FilesTotal(
+            match self.files_repository.count_by_status("PENDING") {
+                Ok(count) => count,
+                Err(e) => {
+                    log::warn!("unable to fetch total files count: {}", e);
+                    0
+                }
+            },
+        ));
+        let _ = self.collector.sender().send(Metric::BytesTotal(
+            match self.files_repository.count_bytes_by_status("PENDING") {
+                Ok(count) => count,
+                Err(e) => {
+                    log::warn!("unable to fetch total bytes count: {}", e);
+                    0
+                }
+            },
+        ));
 
         log::info!("Processing files...");
         let files = match self.files_repository.list_by_status("PENDING") {
@@ -293,7 +319,7 @@ impl<'a> Push<'a> {
                 log::error!("{}", e)
             } else {
                 let _ = sender.send(Metric::ChunkProcessed);
-                let _ = sender.send(Metric::BytesProcessed(bytes));
+                let _ = sender.send(Metric::BytesTransferred(bytes));
             }
         });
     }

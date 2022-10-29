@@ -135,4 +135,46 @@ impl Repository {
             .collect()
             .map_err(Error::from)
     }
+
+    pub fn count_by_status(&self, status: &str) -> Result<u64, Error> {
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        let mut stmt = connection
+            .prepare("select count(*) from files where status = :status")
+            .map_err(Error::from)?;
+
+        let rows = stmt.query(&[(":status", status)]).map_err(Error::from)?;
+
+        let mut rows = rows
+            .map(|row| Ok(row.get(0).unwrap()))
+            .collect::<Vec<u64>>()
+            .map_err(Error::from)?;
+
+        match rows.len() {
+            0 => Ok(0),
+            1 => Ok(rows.remove(0)),
+            _ => Err(Error::new("more than 1 result found")),
+        }
+    }
+
+    pub fn count_bytes_by_status(&self, status: &str) -> Result<u64, Error> {
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        let mut stmt = connection
+            .prepare("select sum(size) from files where status = :status")
+            .map_err(Error::from)?;
+
+        let rows = stmt.query(&[(":status", status)]).map_err(Error::from)?;
+
+        let mut rows = rows
+            .map(|row| Ok(row.get(0).unwrap()))
+            .collect::<Vec<u64>>()
+            .map_err(Error::from)?;
+
+        match rows.len() {
+            0 => Ok(0),
+            1 => Ok(rows.remove(0)),
+            _ => Err(Error::new("more than 1 result found")),
+        }
+    }
 }

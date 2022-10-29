@@ -32,9 +32,13 @@ impl S3 {
 
 impl CloudStore for S3 {
     fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
+        log::debug!("start upload of {}", object_id);
         let (_, code) = self.bucket.put_object(Self::path(object_id), data)?;
         match code {
-            200 => Ok(()),
+            200 => {
+                log::debug!("done upload of {}", object_id);
+                Ok(())
+            }
             403 => Err(Error::new("S3: invalid credentials")),
             _ => Err(Error::new("S3: error")),
         }
