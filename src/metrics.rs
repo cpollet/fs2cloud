@@ -139,7 +139,7 @@ impl Metrics {
 
             chunks_transferred: self.chunks_transferred,
             files_transferred: self.files_transferred,
-            bytes_transferred: self.bytes_transferred,
+            bytes_transferred: self.bytes_transferred_total,
 
             transfer_rate: if self.bytes_transferred > 0 {
                 self.bytes_transferred as f64 / elapsed as f64
