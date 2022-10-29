@@ -3,7 +3,7 @@ use crate::chunk::{Chunk, EncryptedChunk, RemoteEncryptedChunk};
 use crate::file::repository::Repository as FilesRepository;
 use crate::fuse::fs::repository::{Inode, Repository as FsRepository};
 use crate::store::Store;
-use crate::{Error, Pgp};
+use crate::{Error, Pgp, PooledSqliteConnectionManager};
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
     Request,
@@ -26,9 +26,7 @@ pub struct Config<'a> {
 
 pub fn execute(
     config: Config,
-    files_repository: FilesRepository,
-    chunks_repository: ChunksRepository,
-    fs_repository: FsRepository,
+    sqlite: PooledSqliteConnectionManager,
     pgp: Pgp,
     store: Box<dyn Store>,
     runtime: Runtime,
@@ -41,9 +39,9 @@ pub fn execute(
 
     let fs = Fs2CloudFS {
         cache: config.cache_folder.map(PathBuf::from),
-        fs_repository,
-        files_repository,
-        chunks_repository,
+        fs_repository: FsRepository::new(sqlite.clone()),
+        files_repository: FilesRepository::new(sqlite.clone()),
+        chunks_repository: ChunksRepository::new(sqlite),
         pgp: Arc::new(pgp),
         store: Arc::new(store),
         runtime: Arc::new(runtime),

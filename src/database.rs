@@ -6,6 +6,8 @@ use std::ops::DerefMut;
 
 mod embedded;
 
+pub type PooledSqliteConnectionManager  = Pool<SqliteConnectionManager>;
+
 fn open(path: &str) -> Result<Pool<SqliteConnectionManager>, Error> {
     let manager = SqliteConnectionManager::file(path);
     let pool = Pool::new(manager).map_err(Error::from)?;
@@ -17,7 +19,7 @@ fn open(path: &str) -> Result<Pool<SqliteConnectionManager>, Error> {
     }
 }
 
-impl TryFrom<&Config> for Pool<SqliteConnectionManager> {
+impl TryFrom<&Config> for PooledSqliteConnectionManager {
     type Error = Error;
 
     fn try_from(config: &Config) -> Result<Self, Self::Error> {

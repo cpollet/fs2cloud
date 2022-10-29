@@ -53,8 +53,11 @@ pub mod export {
     use crate::chunk::repository::Repository as ChunksRepository;
     use crate::controller::json::JsonFile;
     use crate::file::repository::Repository as FilesRepository;
+    use crate:: PooledSqliteConnectionManager;
 
-    pub fn execute(files_repository: FilesRepository, chunks_repository: ChunksRepository) {
+    pub fn execute(sqlite: PooledSqliteConnectionManager) {
+        let files_repository = FilesRepository::new(sqlite.clone());
+        let chunks_repository = ChunksRepository::new(sqlite.clone());
         let files: Vec<JsonFile> = files_repository
             .list_all()
             .unwrap()
@@ -75,16 +78,20 @@ pub mod import {
     use std::io;
     use std::path::Path;
     use uuid::Uuid;
+    use crate::PooledSqliteConnectionManager;
 
     pub fn execute(
-        files_repository: FilesRepository,
-        chunks_repository: ChunksRepository,
-        fs_repository: FsRepository,
+        sqlite: PooledSqliteConnectionManager,
     ) {
         let files: Option<Vec<JsonFile>> = serde_json::from_reader(io::stdin()).ok();
         if let Some(files) = files {
             for file in files {
-                handle_file(&files_repository, &chunks_repository, &fs_repository, &file)
+                handle_file(
+                    FilesRepository::new(sqlite.clone()),
+                    ChunksRepository::new(sqlite.clone()),
+                    FsRepository::new(sqlite.clone()),
+                    &file
+                )
             }
         } else {
             eprintln!("Not able to deserialize input");
@@ -92,9 +99,9 @@ pub mod import {
     }
 
     fn handle_file(
-        files_repository: &FilesRepository,
-        chunks_repository: &ChunksRepository,
-        fs_repository: &FsRepository,
+        files_repository: FilesRepository,
+        chunks_repository: ChunksRepository,
+        fs_repository: FsRepository,
         file: &JsonFile,
     ) {
         let path = Path::new(&file.path);
@@ -130,7 +137,7 @@ pub mod import {
                     }
                 }
 
-                if let Err(e) = crate::fuse::fs::insert(&db_file.uuid, path, fs_repository) {
+                if let Err(e) = crate::fuse::fs::insert(&db_file.uuid, path, &fs_repository) {
                     log::error!("Cannot insert inode for {}: {}", file.path, e);
                 }
             }

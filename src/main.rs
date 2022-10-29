@@ -7,16 +7,14 @@ use crate::controller::mount;
 use crate::controller::push;
 use crate::error::Error;
 use crate::file::repository::Repository as FilesRepository;
-use crate::fuse::fs::repository::Repository as FsRepository;
 use crate::pgp::Pgp;
 use crate::store::Store;
 use crate::thread_pool::ThreadPool;
 use clap::{command, Arg, Command};
 use clap_complete::{generate, Shell};
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 use std::io;
 use tokio::runtime::Builder;
+use crate::database::PooledSqliteConnectionManager;
 
 mod chunk;
 mod config;
@@ -58,11 +56,6 @@ fn run() -> Result<(), Error> {
         }
     };
 
-    let pool = Pool::<SqliteConnectionManager>::try_from(&config)?;
-    let files_repository = FilesRepository::new(pool.clone());
-    let chunks_repository = ChunksRepository::new(pool.clone());
-    let fs_repository = FsRepository::new(pool);
-
     match matches.subcommand() {
         Some(("autocomplete", args)) => {
             let mut cli = cli();
@@ -74,7 +67,7 @@ fn run() -> Result<(), Error> {
             }
         }
         Some(("export", _args)) => {
-            export::execute(files_repository, chunks_repository);
+            export::execute(PooledSqliteConnectionManager::try_from(&config)?);
         }
         Some(("mount", args)) => {
             mount::execute(
@@ -82,25 +75,21 @@ fn run() -> Result<(), Error> {
                     cache_folder: config.get_cache_folder(),
                     mountpoint: args.value_of("mountpoint").unwrap(),
                 },
-                files_repository,
-                chunks_repository,
-                fs_repository,
+                PooledSqliteConnectionManager::try_from(&config)?,
                 Pgp::try_from(&config)?,
                 Box::<dyn Store>::try_from(&config)?,
                 Builder::new_current_thread().enable_all().build()?,
             )?;
         }
         Some(("import", _args)) => {
-            import::execute(files_repository, chunks_repository, fs_repository);
+            import::execute(PooledSqliteConnectionManager::try_from(&config)?);
         }
         Some(("push", args)) => push::execute(
             push::Config {
                 folder: args.value_of("folder").unwrap(),
                 chunk_size: config.get_chunk_size().get_bytes() as u64,
             },
-            files_repository,
-            chunks_repository,
-            fs_repository,
+            PooledSqliteConnectionManager::try_from(&config)?,
             Pgp::try_from(&config)?,
             Box::<dyn Store>::try_from(&config)?,
             ThreadPool::new(config.get_max_workers_count(), config.get_max_queue_size()),

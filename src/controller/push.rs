@@ -5,7 +5,7 @@ use crate::fuse::fs::repository::Repository as FsRepository;
 use crate::hash::ChunkedSha256;
 use crate::metrics::{Collector, Metric};
 use crate::store::Store;
-use crate::{Pgp, ThreadPool};
+use crate::{Pgp, PooledSqliteConnectionManager, ThreadPool};
 use byte_unit::Byte;
 use std::collections::HashMap;
 use std::fs;
@@ -23,22 +23,18 @@ pub struct Config<'a> {
 
 pub fn execute(
     config: Config,
-    files_repository: FilesRepository,
-    chunks_repository: ChunksRepository,
-    fs_repository: FsRepository,
+    sqlite: PooledSqliteConnectionManager,
     pgp: Pgp,
     store: Box<dyn Store>,
     thread_pool: ThreadPool,
     runtime: Runtime
 ) {
-    let files_repository = Arc::new(files_repository);
-    let chunks_repository = Arc::new(chunks_repository);
     Push {
         folder: config.folder,
         chunk_size: config.chunk_size,
-        files_repository,
-        chunks_repository,
-        fs_repository,
+        files_repository: Arc::new(FilesRepository::new(sqlite.clone())),
+         chunks_repository:Arc::new( ChunksRepository::new(sqlite.clone())),
+         fs_repository: FsRepository::new(sqlite),
         pgp: Arc::new(pgp),
         store: Arc::new(store),
         thread_pool,
