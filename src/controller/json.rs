@@ -53,11 +53,11 @@ pub mod export {
     use crate::chunk::repository::Repository as ChunksRepository;
     use crate::controller::json::JsonFile;
     use crate::file::repository::Repository as FilesRepository;
-    use crate:: PooledSqliteConnectionManager;
+    use crate::PooledSqliteConnectionManager;
 
     pub fn execute(sqlite: PooledSqliteConnectionManager) {
         let files_repository = FilesRepository::new(sqlite.clone());
-        let chunks_repository = ChunksRepository::new(sqlite.clone());
+        let chunks_repository = ChunksRepository::new(sqlite);
         let files: Vec<JsonFile> = files_repository
             .list_all()
             .unwrap()
@@ -75,14 +75,12 @@ pub mod import {
     use crate::controller::json::JsonFile;
     use crate::file::repository::Repository as FilesRepository;
     use crate::fuse::fs::repository::Repository as FsRepository;
+    use crate::PooledSqliteConnectionManager;
     use std::io;
     use std::path::Path;
     use uuid::Uuid;
-    use crate::PooledSqliteConnectionManager;
 
-    pub fn execute(
-        sqlite: PooledSqliteConnectionManager,
-    ) {
+    pub fn execute(sqlite: PooledSqliteConnectionManager) {
         let files: Option<Vec<JsonFile>> = serde_json::from_reader(io::stdin()).ok();
         if let Some(files) = files {
             for file in files {
@@ -90,7 +88,7 @@ pub mod import {
                     FilesRepository::new(sqlite.clone()),
                     ChunksRepository::new(sqlite.clone()),
                     FsRepository::new(sqlite.clone()),
-                    &file
+                    &file,
                 )
             }
         } else {

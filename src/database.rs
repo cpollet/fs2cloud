@@ -6,7 +6,7 @@ use std::ops::DerefMut;
 
 mod embedded;
 
-pub type PooledSqliteConnectionManager  = Pool<SqliteConnectionManager>;
+pub type PooledSqliteConnectionManager = Pool<SqliteConnectionManager>;
 
 fn open(path: &str) -> Result<Pool<SqliteConnectionManager>, Error> {
     let manager = SqliteConnectionManager::file(path);

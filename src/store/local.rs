@@ -1,10 +1,10 @@
 use crate::store::Store;
 use crate::Error;
+use async_trait::async_trait;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Read, Write};
 use std::path::PathBuf;
-use async_trait::async_trait;
 use uuid::Uuid;
 
 pub struct Local {

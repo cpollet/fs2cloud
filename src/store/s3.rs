@@ -1,6 +1,6 @@
-use async_trait::async_trait;
 use crate::error::Error;
 use crate::store::Store;
+use async_trait::async_trait;
 use awscreds::Credentials;
 use s3::Bucket;
 use uuid::Uuid;

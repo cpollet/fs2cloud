@@ -1,6 +1,6 @@
-use async_trait::async_trait;
 use crate::store::Store;
 use crate::Error;
+use async_trait::async_trait;
 use uuid::Uuid;
 
 pub struct Log {}

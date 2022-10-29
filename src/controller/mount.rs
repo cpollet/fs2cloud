@@ -246,7 +246,8 @@ impl Fs2CloudFS {
             .unwrap_or_else(|| {
                 log::debug!("Read chunk {} from store", chunk.uuid);
                 let chunk =
-                    RemoteEncryptedChunk::from(self.runtime.block_on(self.store.get(chunk.uuid))         ?).decrypt(&self.pgp)?;
+                    RemoteEncryptedChunk::from(self.runtime.block_on(self.store.get(chunk.uuid))?)
+                        .decrypt(&self.pgp)?;
                 self.write_to_cache(&chunk.uuid(), chunk.payload());
                 Ok(chunk.payload().into())
             })

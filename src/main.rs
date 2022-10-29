@@ -5,6 +5,7 @@ use crate::config::Config;
 use crate::controller::json::{export, import};
 use crate::controller::mount;
 use crate::controller::push;
+use crate::database::PooledSqliteConnectionManager;
 use crate::error::Error;
 use crate::file::repository::Repository as FilesRepository;
 use crate::pgp::Pgp;
@@ -14,7 +15,6 @@ use clap::{command, Arg, Command};
 use clap_complete::{generate, Shell};
 use std::io;
 use tokio::runtime::Builder;
-use crate::database::PooledSqliteConnectionManager;
 
 mod chunk;
 mod config;

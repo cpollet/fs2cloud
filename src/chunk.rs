@@ -146,7 +146,7 @@ pub struct LocalEncryptedChunk {
 
 impl LocalEncryptedChunk {
     pub fn push(&self, store: Arc<Box<dyn Store>>, runtime: Arc<Runtime>) -> Result<&Self, Error> {
-        if let Err(e) = runtime.block_on(store.put(self.chunk.uuid, self.payload.as_slice())){
+        if let Err(e) = runtime.block_on(store.put(self.chunk.uuid, self.payload.as_slice())) {
             Err(Error::new(&format!(
                 "{}: unable to upload chunk {}: {}",
                 self.chunk.metadata.file.clone(),

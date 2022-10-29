@@ -27,14 +27,14 @@ pub fn execute(
     pgp: Pgp,
     store: Box<dyn Store>,
     thread_pool: ThreadPool,
-    runtime: Runtime
+    runtime: Runtime,
 ) {
     Push {
         folder: config.folder,
         chunk_size: config.chunk_size,
         files_repository: Arc::new(FilesRepository::new(sqlite.clone())),
-         chunks_repository:Arc::new( ChunksRepository::new(sqlite.clone())),
-         fs_repository: FsRepository::new(sqlite),
+        chunks_repository: Arc::new(ChunksRepository::new(sqlite.clone())),
+        fs_repository: FsRepository::new(sqlite),
         pgp: Arc::new(pgp),
         store: Arc::new(store),
         thread_pool,

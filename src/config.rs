@@ -89,6 +89,7 @@ impl Config {
         match store {
             "log" => Ok(StoreKind::Log),
             "s3" => Ok(StoreKind::S3),
+            "s3-official" => Ok(StoreKind::S3Official),
             "local" => Ok(StoreKind::Local),
             _ => Err(Error::new(&format!(
                 "Unable to load configuration from {}: `store.type` {} is invalid",
@@ -130,5 +131,16 @@ impl Config {
                 self.file
             ))
         })
+    }
+
+    pub fn get_s3_official_bucket(&self) -> Result<&str, Error> {
+        self.yaml["store"]["s3-official"]["bucket"]
+            .as_str()
+            .ok_or_else(|| {
+                Error::new(&format!(
+                    "Unable to load configuration from {}: `store.s3.bucket` key is mandatory",
+                    self.file
+                ))
+            })
     }
 }
