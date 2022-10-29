@@ -8,7 +8,7 @@ pub mod local;
 pub mod log;
 pub mod s3;
 
-pub trait CloudStore: Send + Sync {
+pub trait Store: Send + Sync {
     fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error>;
 
     fn get(&self, object_id: Uuid) -> Result<Vec<u8>, Error>;
@@ -29,8 +29,8 @@ pub trait StoreConfig {
     fn get_s3_bucket(&self) -> Result<&str, Error>;
 }
 
-pub fn new(config: &dyn StoreConfig) -> Result<Box<dyn CloudStore>, Error> {
-    fn s3(config: &dyn StoreConfig) -> Result<Box<dyn CloudStore>, Error> {
+pub fn new(config: &dyn StoreConfig) -> Result<Box<dyn Store>, Error> {
+    fn s3(config: &dyn StoreConfig) -> Result<Box<dyn Store>, Error> {
         match S3::new(
             config.get_s3_region()?,
             config.get_s3_bucket()?,

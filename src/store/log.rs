@@ -1,4 +1,4 @@
-use crate::store::CloudStore;
+use crate::store::Store;
 use crate::Error;
 use uuid::Uuid;
 
@@ -10,7 +10,7 @@ impl Log {
     }
 }
 
-impl CloudStore for Log {
+impl Store for Log {
     fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
         log::info!("WRITE {} ({} bytes)", object_id, data.len());
         Ok(())

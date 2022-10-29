@@ -1,4 +1,4 @@
-use crate::store::CloudStore;
+use crate::store::Store;
 use crate::Error;
 use std::fs;
 use std::fs::OpenOptions;
@@ -19,7 +19,7 @@ impl Local {
     }
 }
 
-impl CloudStore for Local {
+impl Store for Local {
     fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
         let mut path = PathBuf::from(self.path.as_path());
         path.push(object_id.to_string());

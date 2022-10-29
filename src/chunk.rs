@@ -1,6 +1,6 @@
 use crate::hash::ChunkedSha256;
 use crate::metrics::Metric;
-use crate::store::CloudStore;
+use crate::store::Store;
 use crate::{ChunksRepository, Error, FilesRepository, Pgp};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
@@ -144,7 +144,7 @@ pub struct LocalEncryptedChunk {
 }
 
 impl LocalEncryptedChunk {
-    pub fn push(&self, store: Arc<Box<dyn CloudStore>>) -> Result<&Self, Error> {
+    pub fn push(&self, store: Arc<Box<dyn Store>>) -> Result<&Self, Error> {
         if let Err(e) = store.put(self.chunk.uuid, self.payload.as_slice()) {
             Err(Error::new(&format!(
                 "{}: unable to upload chunk {}: {}",

@@ -4,7 +4,7 @@ use crate::file::repository::{File as DbFile, Repository as FilesRepository};
 use crate::fuse::fs::repository::Repository as FsRepository;
 use crate::hash::ChunkedSha256;
 use crate::metrics::{Collector, Metric};
-use crate::store::CloudStore;
+use crate::store::Store;
 use crate::{Pgp, ThreadPool};
 use byte_unit::Byte;
 use std::collections::HashMap;
@@ -26,7 +26,7 @@ pub fn execute(
     chunks_repository: ChunksRepository,
     fs_repository: FsRepository,
     pgp: Pgp,
-    store: Box<dyn CloudStore>,
+    store: Box<dyn Store>,
     thread_pool: ThreadPool,
 ) {
     let files_repository = Arc::new(files_repository);
@@ -53,7 +53,7 @@ struct Push<'a> {
     chunks_repository: Arc<ChunksRepository>,
     fs_repository: FsRepository,
     pgp: Arc<Pgp>,
-    store: Arc<Box<dyn CloudStore>>,
+    store: Arc<Box<dyn Store>>,
     thread_pool: ThreadPool,
     hashes: HashMap<Uuid, Arc<Mutex<ChunkedSha256>>>,
     collector: Collector,

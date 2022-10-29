@@ -2,7 +2,7 @@ use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository}
 use crate::chunk::{Chunk, EncryptedChunk, RemoteEncryptedChunk};
 use crate::file::repository::Repository as FilesRepository;
 use crate::fuse::fs::repository::{Inode, Repository as FsRepository};
-use crate::store::CloudStore;
+use crate::store::Store;
 use crate::{Error, Pgp};
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
@@ -29,7 +29,7 @@ pub fn execute(
     chunks_repository: ChunksRepository,
     fs_repository: FsRepository,
     pgp: Pgp,
-    store: Box<dyn CloudStore>,
+    store: Box<dyn Store>,
 ) -> Result<(), Error> {
     let options = vec![MountOption::RO, MountOption::FSName("fs2cloud".to_string())];
 
@@ -68,7 +68,7 @@ struct Fs2CloudFS {
     files_repository: FilesRepository,
     chunks_repository: ChunksRepository,
     pgp: Arc<Pgp>,
-    store: Arc<Box<dyn CloudStore>>,
+    store: Arc<Box<dyn Store>>,
 }
 
 const TTL: Duration = Duration::from_secs(1);

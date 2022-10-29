@@ -1,5 +1,5 @@
 use crate::error::Error;
-use crate::store::CloudStore;
+use crate::store::Store;
 use awscreds::Credentials;
 use s3::Bucket;
 use uuid::Uuid;
@@ -30,7 +30,7 @@ impl S3 {
     }
 }
 
-impl CloudStore for S3 {
+impl Store for S3 {
     fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
         log::debug!("start upload of {}", object_id);
         let (_, code) = self.bucket.put_object(Self::path(object_id), data)?;
