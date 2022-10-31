@@ -39,7 +39,10 @@ pub fn new(config: &Config) -> Result<Box<dyn Store>, Error> {
     }
 
     fn s3_official(config: &Config) -> Result<Box<dyn Store>, Error> {
-        match S3Official::new(config.get_s3_official_bucket()?) {
+        match S3Official::new(
+            config.get_s3_official_bucket()?,
+            config.get_s3_official_multipart_part_size(),
+        ) {
             Ok(s3) => Ok(Box::from(s3)),
             Err(e) => Err(Error::new(&format!("Error configuring S3: {}", e))),
         }

@@ -10,6 +10,7 @@ pub struct S3 {
 }
 
 impl S3 {
+    // todo should not take Option as parameter
     pub fn new(
         region: &str,
         bucket: &str,
@@ -34,11 +35,11 @@ impl S3 {
 #[async_trait]
 impl Store for S3 {
     async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
-        log::debug!("start upload of {}", object_id);
+        log::debug!("{}: start upload", object_id);
         let (_, code) = self.bucket.put_object(Self::path(object_id), data)?;
         match code {
             200 => {
-                log::debug!("done upload of {}", object_id);
+                log::debug!("{}: upload completed", object_id);
                 Ok(())
             }
             403 => Err(Error::new("S3: invalid credentials")),

@@ -143,4 +143,11 @@ impl Config {
                 ))
             })
     }
+
+    pub fn get_s3_official_multipart_part_size(&self) -> u64 {
+        self.yaml["store"]["s3-official"]["multipart_part_size"]
+            .as_str()
+            .map(|b| Byte::from_str(b).unwrap().get_bytes() as u64)
+            .unwrap_or_default()
+    }
 }
