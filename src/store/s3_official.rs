@@ -1,7 +1,7 @@
 use crate::error::Error;
 use crate::store::Store;
 use async_trait::async_trait;
-use aws_sdk_s3::model::{ChecksumAlgorithm, CompletedMultipartUpload, CompletedPart};
+use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::types::ByteStream;
 use aws_sdk_s3::Client;
 use sha2::Digest;
@@ -67,11 +67,7 @@ impl S3Official {
         }
     }
 
-    async fn multipart_upload(
-        &self,
-        object_id: Uuid,
-        data: &[u8],
-    ) -> Result<(), Error> {
+    async fn multipart_upload(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
         log::debug!("{} start multipart upload", object_id);
         let upload = match self
             .client
@@ -90,7 +86,7 @@ impl S3Official {
         let upload_id = upload.upload_id().unwrap();
 
         let parts_count = (data.len() as f64 / self.multipart_size as f64).ceil() as usize;
-        let mut uploaded_parts = Vec::with_capacity(parts_count);
+        let mut uploading_parts = Vec::with_capacity(parts_count);
         let mut error = false;
 
         for part in 0..parts_count {
@@ -106,31 +102,37 @@ impl S3Official {
             );
 
             let payload = ByteStream::from(Vec::from(&data[from..to]));
-            match self
-                .client
-                .upload_part()
-                .upload_id(upload_id)
-                .bucket(&self.bucket)
-                .key(Self::path(object_id))
-                .part_number(part as i32 + 1)
-                .body(payload)
-                .send()
-                .await
-            {
-                Ok(uploaded_part) => uploaded_parts.push(
-                    CompletedPart::builder()
-                        .e_tag(uploaded_part.e_tag().unwrap_or_default())
-                        .part_number(part as i32 + 1)
-                        .build(),
-                ),
+            uploading_parts.push(tokio::spawn(
+                self.client
+                    .upload_part()
+                    .upload_id(upload_id)
+                    .bucket(&self.bucket)
+                    .key(Self::path(object_id))
+                    .part_number(part as i32 + 1)
+                    .body(payload)
+                    .send(),
+            ));
+        }
+
+        let mut uploaded_parts = Vec::with_capacity(parts_count);
+        for part in 1..=parts_count {
+            match uploading_parts.remove(0).await {
+                Ok(Ok(uploaded_part)) => {
+                    log::debug!("{}: part {} uploaded", object_id, part,);
+                    uploaded_parts.push(
+                        CompletedPart::builder()
+                            .e_tag(uploaded_part.e_tag().unwrap_or_default())
+                            .part_number(part as i32)
+                            .build(),
+                    );
+                }
+                Ok(Err(e)) => {
+                    error = true;
+                    log::error!("{}: S3 error during part {} upload: {}", object_id, part, e);
+                }
                 Err(e) => {
                     error = true;
-                    log::error!(
-                        "{}: S3 error during part {} upload: {}",
-                        object_id,
-                        part + 1,
-                        e
-                    );
+                    log::error!("{}: error during part {} upload: {}", object_id, part, e);
                 }
             }
         }
@@ -170,7 +172,7 @@ impl S3Official {
                 .await
             {
                 Ok(_) => {
-                    log::debug!("{} upload completed", object_id);
+                    log::debug!("{} multipart upload completed", object_id);
                     Ok(())
                 }
                 Err(e) => Err(Error::new(&format!(

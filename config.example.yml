@@ -29,8 +29,7 @@ store:
   type: log
 #  s3-official:
 #    bucket: ...
-#    # if > 5MiB (5242880 Bytes), uploads the chunks in parts of multipart_part_size. In that case, additional
-#    # checksums are computed, making the process slower but more resilient to network failures
+#    # if > 5MiB (5242880 Bytes), uploads the chunks in parts of multipart_part_size.
 #    multipart_part_size: ...
 #  s3:
 #    access_key: ...
