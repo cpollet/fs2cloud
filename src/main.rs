@@ -86,7 +86,7 @@ fn run() -> Result<(), Error> {
         }
         Some(("push", _args)) => push::execute(
             push::Config {
-                folder: config.get_root_path()?,
+                root_folder: config.get_root_path()?,
                 chunk_size: config.get_chunk_size().get_bytes() as u64,
             },
             PooledSqliteConnectionManager::try_from(&config)?,
@@ -143,8 +143,5 @@ fn cli() -> Command<'static> {
                 ),
         )
         .subcommand(Command::new("import").about("Imports database from JSON (reads from stdin)"))
-        .subcommand(
-            Command::new("push")
-                .about("Copy local folder to cloud")
-        )
+        .subcommand(Command::new("push").about("Copy local folder to cloud"))
 }

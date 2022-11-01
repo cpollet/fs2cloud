@@ -17,7 +17,7 @@ use tokio::runtime::Runtime;
 use uuid::Uuid;
 
 pub struct Config<'a> {
-    pub folder: &'a str,
+    pub root_folder: &'a str,
     pub chunk_size: u64,
 }
 
@@ -30,7 +30,8 @@ pub fn execute(
     runtime: Runtime,
 ) {
     Push {
-        folder: config.folder,
+        root_folder: config.root_folder,
+        root_path: PathBuf::from(config.root_folder).as_path(),
         chunk_size: config.chunk_size,
         files_repository: Arc::new(FilesRepository::new(sqlite.clone())),
         chunks_repository: Arc::new(ChunksRepository::new(sqlite.clone())),
@@ -46,7 +47,8 @@ pub fn execute(
 }
 
 struct Push<'a> {
-    folder: &'a str,
+    root_folder: &'a str,
+    root_path: &'a Path,
     chunk_size: u64,
     files_repository: Arc<FilesRepository>,
     chunks_repository: Arc<ChunksRepository>,
@@ -61,14 +63,14 @@ struct Push<'a> {
 
 impl<'a> Push<'a> {
     fn execute(&mut self) {
-        log::info!("Scanning files in `{}`...", self.folder);
+        log::info!("Scanning files in `{}`...", self.root_folder);
 
-        match fs::read_dir(self.folder) {
+        match fs::read_dir(self.root_folder) {
             Err(e) => {
-                log::error!("{}: error: {}", self.folder, e);
+                log::error!("{}: error: {}", self.root_folder, e);
                 return;
             }
-            Ok(dir) => self.visit_dir(&PathBuf::from(self.folder), dir),
+            Ok(dir) => self.visit_dir(&PathBuf::from(self.root_folder), dir),
         }
 
         let _ = self.collector.sender().send(Metric::ChunksTotal(
@@ -120,7 +122,7 @@ impl<'a> Push<'a> {
                 Ok(chunks) => chunks,
             };
 
-            let mut path = PathBuf::from(self.folder);
+            let mut path = PathBuf::from(self.root_folder);
             path.push(&file.path);
 
             let mut source = match fs::File::open(&path) {
@@ -174,7 +176,7 @@ impl<'a> Push<'a> {
     }
 
     fn visit_file(&self, path: &Path, metadata: &fs::Metadata) {
-        let local_path = path.strip_prefix(self.folder).unwrap().to_owned();
+        let local_path = path.strip_prefix(self.root_folder).unwrap().to_owned();
         let chunks_count = (metadata.len() + self.chunk_size - 1) / self.chunk_size;
 
         let db_file = match self.files_repository.find_by_path(local_path.as_path()) {
@@ -196,7 +198,11 @@ impl<'a> Push<'a> {
                         return;
                     }
                 };
-                if let Err(e) = crate::fuse::fs::insert(&file.uuid, path, &self.fs_repository) {
+                if let Err(e) = crate::fuse::fs::insert(
+                    &file.uuid,
+                    path.strip_prefix(self.root_path).unwrap(),
+                    &self.fs_repository,
+                ) {
                     log::error!("{}: unable to update fuse data: {}", path.display(), e);
                 }
                 file
