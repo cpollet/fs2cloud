@@ -84,9 +84,9 @@ fn run() -> Result<(), Error> {
         Some(("import", _args)) => {
             import::execute(PooledSqliteConnectionManager::try_from(&config)?);
         }
-        Some(("push", args)) => push::execute(
+        Some(("push", _args)) => push::execute(
             push::Config {
-                folder: args.value_of("folder").unwrap(),
+                folder: config.get_root_path()?,
                 chunk_size: config.get_chunk_size().get_bytes() as u64,
             },
             PooledSqliteConnectionManager::try_from(&config)?,
@@ -146,14 +146,5 @@ fn cli() -> Command<'static> {
         .subcommand(
             Command::new("push")
                 .about("Copy local folder to cloud")
-                .arg(
-                    Arg::new("folder")
-                        .help("local folder path")
-                        .long("folder")
-                        .short('f')
-                        .required(true)
-                        .takes_value(true)
-                        .forbid_empty_values(true),
-                ),
         )
 }

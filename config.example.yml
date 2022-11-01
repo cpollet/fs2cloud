@@ -1,5 +1,12 @@
 database: ./database.db3
 
+# the folder from which to start the backup
+root: /path/to/root
+
+# list of files to ignore
+#ignore:
+#  - .DS_Store
+
 # total memory consumption is given by `chunks.size * (workers + queue_size)`
 # i.e. 90MB chunks * 8 in progress + 8 in the queue = ~1.5GB RAM
 
@@ -10,8 +17,11 @@ workers: 8
 # consumption. Valid values: >= 0
 queue_size: 8
 
+# optional, but if set, a cache folder containing decrypted chunks being accessed through the FUSE filesystem
+#cache: ...
+
 chunks:
-  size: 90MB
+  size: 50MB
 
 pgp:
   # a public key to push, a keypair for pull/fuse
@@ -30,7 +40,7 @@ store:
 #  s3-official:
 #    bucket: ...
 #    # if > 5MiB (5242880 Bytes), uploads the chunks in parts of multipart_part_size.
-#    multipart_part_size: ...
+#    multipart_part_size: 10MB
 #  s3:
 #    access_key: ...
 #    secret_key: ...

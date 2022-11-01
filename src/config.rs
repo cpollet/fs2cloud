@@ -84,6 +84,15 @@ impl Config {
         })
     }
 
+    pub fn get_root_path(&self) -> Result<&str, Error> {
+        self.yaml["root"].as_str().ok_or_else(|| {
+            Error::new(&format!(
+                "Unable to load configuration from {}: `root` key is mandatory",
+                self.file
+            ))
+        })
+    }
+
     pub fn get_store_type(&self) -> Result<StoreKind, Error> {
         let store = self.yaml["store"]["type"].as_str().unwrap_or("log");
         match store {
