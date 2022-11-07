@@ -3,9 +3,10 @@ database: ./database.db3
 # the folder from which to start the backup
 root: /path/to/root
 
-# list of files to ignore
-#ignore:
-#  - .DS_Store
+# list of files to ignore. Syntax: https://docs.rs/globset/latest/globset/#syntax
+ignore:
+  - "**/Thumbs.db"
+  - "**/.DS_Store"
 
 # total memory consumption is given by `chunks.size * (workers + queue_size)`
 # i.e. 90MB chunks * 8 in progress + 8 in the queue = ~1.5GB RAM

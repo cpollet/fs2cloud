@@ -1,8 +1,10 @@
 use crate::store::StoreKind;
 use crate::Error;
 use byte_unit::Byte;
+use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::fs;
 use std::path::Path;
+use yaml_rust::yaml::Array;
 use yaml_rust::{Yaml, YamlLoader};
 
 pub struct Config {
@@ -91,6 +93,19 @@ impl Config {
                 self.file
             ))
         })
+    }
+
+    pub fn get_ignored_files(&self) -> Result<GlobSet, Error> {
+        let mut globs = GlobSetBuilder::new();
+        for glob in self.yaml["ignore"]
+            .as_vec()
+            .unwrap_or(&Array::new())
+            .iter()
+            .map(|item| item.as_str().unwrap_or_default())
+        {
+            globs.add(Glob::new(glob)?);
+        }
+        Ok(globs.build()?)
     }
 
     pub fn get_store_type(&self) -> Result<StoreKind, Error> {

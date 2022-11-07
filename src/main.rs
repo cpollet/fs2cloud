@@ -88,6 +88,7 @@ fn run() -> Result<(), Error> {
             push::Config {
                 root_folder: config.get_root_path()?,
                 chunk_size: config.get_chunk_size().get_bytes() as u64,
+                ignored_files: config.get_ignored_files()?,
             },
             PooledSqliteConnectionManager::try_from(&config)?,
             Pgp::try_from(&config)?,

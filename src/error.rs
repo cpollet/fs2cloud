@@ -92,3 +92,9 @@ impl From<bincode::Error> for Error {
         Self { msg: e.to_string() }
     }
 }
+
+impl From<globset::Error> for Error {
+    fn from(e: globset::Error) -> Self {
+        Self { msg: e.to_string() }
+    }
+}

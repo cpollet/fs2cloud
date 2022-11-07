@@ -7,6 +7,7 @@ use crate::metrics::{Collector, Metric};
 use crate::store::Store;
 use crate::{Pgp, PooledSqliteConnectionManager, ThreadPool};
 use byte_unit::Byte;
+use globset::GlobSet;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::ReadDir;
@@ -19,6 +20,7 @@ use uuid::Uuid;
 pub struct Config<'a> {
     pub root_folder: &'a str,
     pub chunk_size: u64,
+    pub ignored_files: GlobSet,
 }
 
 pub fn execute(
@@ -33,6 +35,7 @@ pub fn execute(
         root_folder: config.root_folder,
         root_path: PathBuf::from(config.root_folder).as_path(),
         chunk_size: config.chunk_size,
+        ignored_files: config.ignored_files,
         files_repository: Arc::new(FilesRepository::new(sqlite.clone())),
         chunks_repository: Arc::new(ChunksRepository::new(sqlite.clone())),
         fs_repository: FsRepository::new(sqlite),
@@ -50,6 +53,7 @@ struct Push<'a> {
     root_folder: &'a str,
     root_path: &'a Path,
     chunk_size: u64,
+    ignored_files: GlobSet,
     files_repository: Arc<FilesRepository>,
     chunks_repository: Arc<ChunksRepository>,
     fs_repository: FsRepository,
@@ -176,6 +180,13 @@ impl<'a> Push<'a> {
     }
 
     fn visit_file(&self, path: &Path, metadata: &fs::Metadata) {
+        let file_name = path.file_name().unwrap();
+        log::info!("filename: {}", file_name.to_str().unwrap());
+        if self.ignored_files.is_match(path) {
+            log::info!("skip {}", file_name.to_str().unwrap());
+            return;
+        }
+
         let local_path = path.strip_prefix(self.root_folder).unwrap().to_owned();
         let chunks_count = (metadata.len() + self.chunk_size - 1) / self.chunk_size;
 
