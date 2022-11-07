@@ -53,7 +53,7 @@ pub fn execute(
     };
 
     log::info!("FS mounted. CTRL+C to unmount");
-    let mut signals = match Signals::new(&[SIGINT]) {
+    let mut signals = match Signals::new([SIGINT]) {
         Ok(s) => s,
         Err(e) => panic!("{}", e),
     };

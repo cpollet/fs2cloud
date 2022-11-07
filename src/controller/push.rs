@@ -153,7 +153,7 @@ impl<'a> Push<'a> {
     }
 
     fn visit_path(&self, path: &PathBuf) {
-        if let Err(e) = match fs::metadata(&path) {
+        if let Err(e) = match fs::metadata(path) {
             Err(e) => Err(e),
             Ok(metadata) if metadata.is_file() => {
                 self.visit_file(path, &metadata);

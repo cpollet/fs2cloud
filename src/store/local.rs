@@ -13,7 +13,7 @@ pub struct Local {
 
 impl Local {
     pub fn new(path: &str) -> Result<Self, Error> {
-        fs::create_dir_all(&path)?;
+        fs::create_dir_all(path)?;
         Ok(Self {
             path: PathBuf::from(path),
         })
