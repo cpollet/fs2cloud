@@ -3,8 +3,8 @@ extern crate core;
 use crate::chunk::repository::Repository as ChunksRepository;
 use crate::config::Config;
 use crate::controller::json::{export, import};
-use crate::controller::mount;
 use crate::controller::push;
+use crate::controller::{crawl, mount};
 use crate::database::PooledSqliteConnectionManager;
 use crate::error::Error;
 use crate::file::repository::Repository as FilesRepository;
@@ -66,6 +66,14 @@ fn run() -> Result<(), Error> {
                 let _ = cli.print_long_help();
             }
         }
+        Some(("crawl", _args)) => crawl::execute(
+            crawl::Config {
+                root_folder: config.get_root_path()?,
+                chunk_size: config.get_chunk_size().get_bytes() as u64,
+                ignored_files: config.get_ignored_files()?,
+            },
+            PooledSqliteConnectionManager::try_from(&config)?,
+        ),
         Some(("export", _args)) => {
             export::execute(PooledSqliteConnectionManager::try_from(&config)?);
         }
@@ -87,8 +95,6 @@ fn run() -> Result<(), Error> {
         Some(("push", _args)) => push::execute(
             push::Config {
                 root_folder: config.get_root_path()?,
-                chunk_size: config.get_chunk_size().get_bytes() as u64,
-                ignored_files: config.get_ignored_files()?,
             },
             PooledSqliteConnectionManager::try_from(&config)?,
             Pgp::try_from(&config)?,
@@ -127,8 +133,9 @@ fn cli() -> Command<'static> {
                         .possible_values(Shell::possible_values()),
                 ),
         )
+        .subcommand(Command::new("crawl").about("Crawl to discover files to push"))
         .subcommand(
-            Command::new("export").about("Exports files database to JSON (writes to stdout)"),
+            Command::new("export").about("Export files database to JSON (writes to stdout)"),
         )
         .subcommand(
             Command::new("mount")
@@ -143,6 +150,6 @@ fn cli() -> Command<'static> {
                         .forbid_empty_values(true),
                 ),
         )
-        .subcommand(Command::new("import").about("Imports database from JSON (reads from stdin)"))
-        .subcommand(Command::new("push").about("Copy local folder to cloud"))
+        .subcommand(Command::new("import").about("Import database from JSON (reads from stdin)"))
+        .subcommand(Command::new("push").about("Copy crawled files to cloud"))
 }
