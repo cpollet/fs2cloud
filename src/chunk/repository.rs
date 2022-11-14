@@ -45,7 +45,7 @@ pub struct Repository {
 
 impl Repository {
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
-        Repository { pool }
+        Self { pool }
     }
 
     pub fn insert(

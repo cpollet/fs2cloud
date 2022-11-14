@@ -173,6 +173,7 @@ impl<'a> Push<'a> {
         let runtime = self.runtime.clone();
 
         self.thread_pool.execute(move || {
+            log::debug!("process chunk: {:?}", chunk);
             let bytes = chunk.payload().len() as u64;
             let chunk = match chunk.encrypt(&pgp) {
                 Ok(cipher) => cipher,

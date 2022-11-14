@@ -1,7 +1,7 @@
 #!/bin/bash
 release=0
 
-export RUST_LOG="warn,fs2cloud=info,fs2cloud::store::s3_official=trace"
+export RUST_LOG="warn,fs2cloud=info"
 rm test/database.db3
 
 if [ $release -eq 0 ]; then

@@ -241,7 +241,7 @@ impl Filesystem for Fs2CloudFS {
 
 impl Fs2CloudFS {
     fn read_from_store(&self, chunk: &DbChunk) -> Result<Vec<u8>, Error> {
-        self.read_from_cache_or_store(&chunk.uuid)
+        self.read_from_cache(&chunk.uuid)
             .map(Ok)
             .unwrap_or_else(|| {
                 log::debug!("Read chunk {} from store", chunk.uuid);
@@ -253,7 +253,7 @@ impl Fs2CloudFS {
             })
     }
 
-    fn read_from_cache_or_store(&self, chunk: &Uuid) -> Option<Vec<u8>> {
+    fn read_from_cache(&self, chunk: &Uuid) -> Option<Vec<u8>> {
         self.cache
             .as_ref()
             .map(|path| path.join(Path::new(&chunk.to_string())))

@@ -13,7 +13,7 @@ pub struct Config {
 }
 
 const MAX_CHUNK_SIZE: &str = "1GB";
-const DEFAULT_CHUNK_SIZE: &str = "75MB";
+const DEFAULT_CHUNK_SIZE: &str = "100MB";
 
 impl Config {
     pub fn new(file: &str) -> Result<Self, Error> {
