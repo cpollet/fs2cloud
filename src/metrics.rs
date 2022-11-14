@@ -210,7 +210,7 @@ impl Display for Point {
         };
         write!(
             f,
-            "{percent:.2}%, ETA {eta} - {p_chunks}/{t_chunks} chunks; {p_files}/{t_files} files; {p_bytes}/{t_bytes} bytes; rate: {rate}/sec ({avg_rate}/sec avg)",
+            "{percent:.2}%, ETA {eta} - {p_chunks}/{t_chunks} chunks; {p_files}/{t_files} files; {p_bytes}/{t_bytes}; rate: {rate}/sec ({avg_rate}/sec avg)",
             percent = percent,
             eta = eta,
             p_chunks = self.chunks_transferred,
