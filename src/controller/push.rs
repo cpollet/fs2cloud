@@ -2,8 +2,10 @@ use crate::aggregate::repository::Repository as AggregatesRepository;
 use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository};
 use crate::chunk::{Chunk, ClearChunk, Metadata};
 use crate::file::repository::{File as DbFile, Repository as FilesRepository};
+use crate::file::Mode;
 use crate::hash::ChunkedSha256;
 use crate::metrics::{Collector, Metric};
+use crate::status::Status;
 use crate::store::Store;
 use crate::{Pgp, PooledSqliteConnectionManager, ThreadPool};
 use std::collections::HashMap;
@@ -58,7 +60,7 @@ struct Push<'a> {
 impl<'a> Push<'a> {
     fn execute(&mut self) {
         let _ = self.collector.sender().send(Metric::ChunksTotal(
-            match self.chunks_repository.count_by_status("PENDING") {
+            match self.chunks_repository.count_by_status(Status::Pending) {
                 Ok(count) => count,
                 Err(e) => {
                     log::warn!("unable to fetch total chunks count: {}", e);
@@ -67,7 +69,7 @@ impl<'a> Push<'a> {
             },
         ));
         let _ = self.collector.sender().send(Metric::FilesTotal(
-            match self.files_repository.count_by_status("PENDING") {
+            match self.files_repository.count_by_status(Status::Pending) {
                 Ok(count) => count,
                 Err(e) => {
                     log::warn!("unable to fetch total files count: {}", e);
@@ -76,7 +78,7 @@ impl<'a> Push<'a> {
             },
         ));
         let _ = self.collector.sender().send(Metric::BytesTotal(
-            match self.files_repository.count_bytes_by_status("PENDING") {
+            match self.files_repository.count_bytes_by_status(Status::Pending) {
                 Ok(count) => count,
                 Err(e) => {
                     log::warn!("unable to fetch total bytes count: {}", e);
@@ -88,7 +90,7 @@ impl<'a> Push<'a> {
         log::info!("Processing chunked files...");
         let files = match self
             .files_repository
-            .find_by_status_and_mode("PENDING", "CHUNCKED")
+            .find_by_status_and_mode(Status::Pending, Mode::Chunked)
         {
             Err(e) => {
                 log::error!("error loading files: {}", e);
@@ -100,7 +102,7 @@ impl<'a> Push<'a> {
         for file in files {
             let chunks = match self
                 .chunks_repository
-                .find_by_file_uuid_and_status(&file.uuid, "PENDING")
+                .find_by_file_uuid_and_status(&file.uuid, Status::Pending)
             {
                 Err(e) => {
                     log::error!("{}: error: {}", file.path, e);
@@ -128,7 +130,7 @@ impl<'a> Push<'a> {
         log::info!("Processing aggregate files...");
         let aggregates = match self
             .files_repository
-            .find_by_status_and_mode("PENDING", "AGGREGATE")
+            .find_by_status_and_mode(Status::Pending, Mode::Aggregate)
         {
             Err(e) => {
                 log::error!("error loading files: {}", e);

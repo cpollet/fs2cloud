@@ -27,6 +27,7 @@ mod fuse;
 mod hash;
 mod metrics;
 mod pgp;
+mod status;
 mod store;
 mod thread_pool;
 

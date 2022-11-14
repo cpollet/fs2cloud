@@ -1,4 +1,5 @@
 use crate::error::Error;
+use crate::status::Status;
 use fallible_iterator::FallibleIterator;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -19,13 +20,14 @@ pub struct Chunk {
     pub size: u64,
     /// clear text length
     pub payload_size: u64,
-    pub status: String,
+    pub status: Status,
 }
 
 impl From<&Row<'_>> for Chunk {
     fn from(row: &Row<'_>) -> Self {
         let uuid: String = row.get(0).unwrap();
         let file_uuid: String = row.get(1).unwrap();
+        let status: String = row.get(7).unwrap();
         Chunk {
             uuid: Uuid::parse_str(&uuid).unwrap(),
             file_uuid: Uuid::parse_str(&file_uuid).unwrap(),
@@ -34,7 +36,7 @@ impl From<&Row<'_>> for Chunk {
             offset: row.get(4).unwrap(),
             size: row.get(5).unwrap(),
             payload_size: row.get(6).unwrap(),
-            status: row.get(7).unwrap(),
+            status: TryInto::<Status>::try_into(status.as_str()).unwrap(),
         }
     }
 }
@@ -66,7 +68,7 @@ impl Repository {
             offset,
             size,
             payload_size,
-            status: "PENDING".into(),
+            status: Status::Pending,
         };
         self.pool
             .get()
@@ -81,7 +83,7 @@ impl Repository {
                     (":offset", &chunk.offset.to_string()),
                     (":size", &chunk.size.to_string()),
                     (":payload_size", &chunk.payload_size.to_string()),
-                    (":status", &chunk.status),
+                    (":status", &Into::<&str>::into(&chunk.status).to_string()),
                 ],
             )
             .map_err(Error::from)
@@ -102,7 +104,7 @@ impl Repository {
                     (":offset", &chunk.offset.to_string()),
                     (":size", &chunk.size.to_string()),
                     (":payload_size", &chunk.payload_size.to_string()),
-                    (":status", &chunk.status),
+                    (":status", &Into::<&str>::into(&chunk.status).to_string()),
                 ],
             )
             .map_err(Error::from)?;
@@ -179,7 +181,7 @@ impl Repository {
     pub fn find_by_file_uuid_and_status(
         &self,
         file_uuid: &Uuid,
-        status: &str,
+        status: Status,
     ) -> Result<Vec<Chunk>, Error> {
         let connection = self.pool.get().map_err(Error::from)?;
 
@@ -190,7 +192,7 @@ impl Repository {
         let rows = stmt
             .query(&[
                 (":file_uuid", &file_uuid.to_string()),
-                (":status", &status.to_string()),
+                (":status", &Into::<&str>::into(&status).to_string()),
             ])
             .map_err(Error::from)?;
 
@@ -215,14 +217,16 @@ impl Repository {
             .map_err(Error::from)
     }
 
-    pub fn count_by_status(&self, status: &str) -> Result<u64, Error> {
+    pub fn count_by_status(&self, status: Status) -> Result<u64, Error> {
         let connection = self.pool.get().map_err(Error::from)?;
 
         let mut stmt = connection
             .prepare("select count(*) from chunks where status = :status")
             .map_err(Error::from)?;
 
-        let rows = stmt.query(&[(":status", status)]).map_err(Error::from)?;
+        let rows = stmt
+            .query(&[(":status", Into::<&str>::into(&status))])
+            .map_err(Error::from)?;
 
         let mut rows = rows
             .map(|row| Ok(row.get(0).unwrap()))

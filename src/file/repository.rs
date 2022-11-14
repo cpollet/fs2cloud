@@ -1,3 +1,5 @@
+use crate::file::Mode;
+use crate::status::Status;
 use crate::Error;
 use fallible_iterator::FallibleIterator;
 use r2d2::Pool;
@@ -13,19 +15,20 @@ pub struct File {
     pub size: u64,
     pub sha256: String,
     pub chunks: u64,
-    pub mode: String,
+    pub mode: Mode,
 }
 
 impl From<&Row<'_>> for File {
     fn from(row: &Row<'_>) -> Self {
         let uuid: String = row.get(0).unwrap();
+        let mode: String = row.get(5).unwrap();
         File {
             uuid: Uuid::parse_str(&uuid).unwrap(),
             path: row.get(1).unwrap(),
             sha256: row.get(2).unwrap(),
             size: row.get(3).unwrap(),
             chunks: row.get(4).unwrap(),
-            mode: row.get(5).unwrap(),
+            mode: Mode::try_from(mode.as_str()).unwrap(),
         }
     }
 }
@@ -45,7 +48,7 @@ impl Repository {
         sha256: String,
         size: u64,
         chunks: u64,
-        mode: String,
+        mode: Mode,
     ) -> Result<File, Error> {
         let file = File {
             uuid: Uuid::new_v4(),
@@ -66,7 +69,7 @@ impl Repository {
                     (":sha256", &file.sha256),
                     (":size", &file.size.to_string()),
                     (":chunks", &file.chunks.to_string()),
-                    (":mode", &file.mode),
+                    (":mode", &Into::<&str>::into(&file.mode).to_string()),
                 ],
             )
             .map_err(Error::from)
@@ -113,7 +116,7 @@ impl Repository {
             .map_err(Error::from)
     }
 
-    pub fn find_by_status_and_mode(&self, status: &str, mode: &str) -> Result<Vec<File>, Error> {
+    pub fn find_by_status_and_mode(&self, status: Status, mode: Mode) -> Result<Vec<File>, Error> {
         let connection = self.pool.get().map_err(Error::from)?;
 
         let mut stmt = connection
@@ -121,7 +124,10 @@ impl Repository {
             .map_err(Error::from)?;
 
         let rows = stmt
-            .query(&[(":status", status), (":mode", mode)])
+            .query(&[
+                (":status", Into::<&str>::into(&status)),
+                (":mode", Into::<&str>::into(&mode)),
+            ])
             .map_err(Error::from)?;
 
         rows.map(|row| Ok(row.into()))
@@ -184,14 +190,16 @@ impl Repository {
             .map_err(Error::from)
     }
 
-    pub fn count_by_status(&self, status: &str) -> Result<u64, Error> {
+    pub fn count_by_status(&self, status: Status) -> Result<u64, Error> {
         let connection = self.pool.get().map_err(Error::from)?;
 
         let mut stmt = connection
             .prepare("select count(*) from files where status = :status")
             .map_err(Error::from)?;
 
-        let rows = stmt.query(&[(":status", status)]).map_err(Error::from)?;
+        let rows = stmt
+            .query(&[(":status", Into::<&str>::into(&status))])
+            .map_err(Error::from)?;
 
         let mut rows = rows
             .map(|row| Ok(row.get(0).unwrap()))
@@ -205,14 +213,16 @@ impl Repository {
         }
     }
 
-    pub fn count_bytes_by_status(&self, status: &str) -> Result<u64, Error> {
+    pub fn count_bytes_by_status(&self, status: Status) -> Result<u64, Error> {
         let connection = self.pool.get().map_err(Error::from)?;
 
         let mut stmt = connection
             .prepare("select sum(size) from files where status = :status")
             .map_err(Error::from)?;
 
-        let rows = stmt.query(&[(":status", status)]).map_err(Error::from)?;
+        let rows = stmt
+            .query(&[(":status", Into::<&str>::into(&status))])
+            .map_err(Error::from)?;
 
         let mut rows = rows
             .map(|row| Ok(row.get(0).unwrap()))

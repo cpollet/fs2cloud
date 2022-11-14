@@ -23,7 +23,7 @@ impl From<(&File, Vec<Chunk>)> for JsonFile {
             size: file.size,
             sha256: file.sha256.clone(),
             chunks: chunks.iter().map(JsonChunk::from).collect(),
-            mode: file.mode.clone(),
+            mode: Into::<&str>::into(&file.mode).to_string(),
         }
     }
 }
@@ -76,6 +76,7 @@ pub mod import {
     use crate::chunk::repository::Repository as ChunksRepository;
     use crate::controller::json::JsonFile;
     use crate::file::repository::Repository as FilesRepository;
+    use crate::file::Mode;
     use crate::fuse::fs::repository::Repository as FsRepository;
     use crate::PooledSqliteConnectionManager;
     use std::io;
@@ -115,7 +116,7 @@ pub mod import {
             file.sha256.clone(),
             file.size,
             file.chunks.len() as u64,
-            file.mode.clone(),
+            Mode::try_from(file.mode.as_str()).unwrap(),
         ) {
             Err(e) => log::error!("Could not import file {}: {}", file.path, e),
             Ok(db_file) => {

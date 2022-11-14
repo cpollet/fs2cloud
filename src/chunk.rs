@@ -1,5 +1,6 @@
 use crate::hash::ChunkedSha256;
 use crate::metrics::Metric;
+use crate::status::Status;
 use crate::store::Store;
 use crate::{ChunksRepository, Error, FilesRepository, Pgp};
 use serde::{Deserialize, Serialize};
@@ -211,7 +212,12 @@ impl LocalEncryptedChunk {
                 let mut hash = hash.lock().unwrap();
                 hash.update(self.chunk.payload.as_slice(), self.chunk.metadata.idx);
 
-                if chunks.iter().filter(|chunk| chunk.status != "DONE").count() == 0 {
+                if chunks
+                    .iter()
+                    .filter(|chunk| chunk.status != Status::Done)
+                    .count()
+                    == 0
+                {
                     let sha256 = match hash.finalize() {
                         None => {
                             log::error!("{} could not compute sha256", self.chunk.metadata.file);

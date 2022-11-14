@@ -1,6 +1,7 @@
 use crate::aggregate::repository::Repository as AggregatesRepository;
 use crate::chunk::repository::Repository as ChunksRepository;
 use crate::file::repository::{File, Repository as FilesRepository};
+use crate::file::Mode;
 use crate::fuse::fs::repository::Repository as FsRepository;
 use crate::{Error, PooledSqliteConnectionManager};
 use byte_unit::Byte;
@@ -111,11 +112,10 @@ impl<'a> Crawl<'a> {
         let local_path = path.strip_prefix(self.root_folder).unwrap().to_owned();
         let chunks_count = (metadata.len() + self.chunk_size - 1) / self.chunk_size;
         let mode = if metadata.len() < self.aggregate_min_size {
-            "AGGREGATED"
+            Mode::Aggregated
         } else {
-            "CHUNKED"
-        }
-        .to_string();
+            Mode::Chunked
+        };
 
         let db_file = match self.files_repository.find_by_path(local_path.as_path()) {
             Err(e) => {
@@ -248,13 +248,8 @@ impl<'a> Crawl<'a> {
             filesize: u64,
         ) -> Result<CurrentAggregate, Error> {
             let path = format!("{}.tar", Uuid::new_v4());
-            let db_file = file_repository.insert(
-                path.clone(),
-                "".to_string(),
-                0,
-                1,
-                "AGGREGATE".to_string(),
-            )?;
+            let db_file =
+                file_repository.insert(path.clone(), "".to_string(), 0, 1, Mode::Aggregate)?;
             chunks_repository.insert(Uuid::new_v4(), db_file.uuid, 0, "", 0, 0, 0)?;
             Ok(CurrentAggregate {
                 path,
