@@ -3,8 +3,8 @@ extern crate core;
 use crate::chunk::repository::Repository as ChunksRepository;
 use crate::config::Config;
 use crate::controller::json::{export, import};
-use crate::controller::push;
 use crate::controller::{crawl, mount};
+use crate::controller::{push, unwrap};
 use crate::database::PooledSqliteConnectionManager;
 use crate::error::Error;
 use crate::file::repository::Repository as FilesRepository;
@@ -102,6 +102,9 @@ fn run() -> Result<(), Error> {
             ThreadPool::new(config.get_max_workers_count(), config.get_max_queue_size()),
             Builder::new_current_thread().enable_all().build()?,
         ),
+        Some(("unwrap", args)) => {
+            unwrap::execute(args.value_of("path").unwrap(), Pgp::try_from(&config)?)
+        }
         Some((command, _)) => log::error!("Invalid command: {}", command),
         None => log::error!("No command provided."),
     }
@@ -152,4 +155,16 @@ fn cli() -> Command<'static> {
         )
         .subcommand(Command::new("import").about("Import database from JSON (reads from stdin)"))
         .subcommand(Command::new("push").about("Copy crawled files to cloud"))
+        .subcommand(
+            Command::new("unwrap")
+                .about("Unwrap chunk to return raw data")
+                .arg(
+                    Arg::new("path")
+                        .long("path")
+                        .short('p')
+                        .help("Path to the chunk to unwrap")
+                        .takes_value(true)
+                        .required(true),
+                ),
+        )
 }

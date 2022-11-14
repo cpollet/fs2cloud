@@ -4,6 +4,7 @@ use crate::store::Store;
 use crate::{ChunksRepository, Error, FilesRepository, Pgp};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
+use std::fmt::{Debug, Formatter};
 use std::io::Cursor;
 use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex};
@@ -32,10 +33,13 @@ pub trait EncryptedChunk {
     fn decrypt(self, pgp: &Pgp) -> Result<ClearChunk, Error>;
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Metadata {
+    /// filename
     file: String,
+    /// index of the chunk
     idx: u64,
+    /// total chunks count for that file
     total: u64,
 }
 
@@ -64,6 +68,19 @@ pub struct ClearChunk {
     uuid: Uuid,
     metadata: Metadata,
     payload: Vec<u8>,
+}
+
+impl Debug for ClearChunk {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{{ version: {:?}, uuid: {:?}, metadata: {:?}, size: {} }}",
+            self.version,
+            self.uuid,
+            self.metadata,
+            self.payload.len()
+        )
+    }
 }
 
 impl ClearChunk {
