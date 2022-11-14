@@ -16,6 +16,7 @@ use clap_complete::{generate, Shell};
 use std::io;
 use tokio::runtime::Builder;
 
+mod aggregate;
 mod chunk;
 mod config;
 mod controller;
@@ -70,6 +71,8 @@ fn run() -> Result<(), Error> {
             crawl::Config {
                 root_folder: config.get_root_path()?,
                 chunk_size: config.get_chunk_size().get_bytes() as u64,
+                aggregate_min_size: config.get_aggregate_min_size().get_bytes() as u64,
+                aggregate_size: config.get_aggregate_size().get_bytes() as u64,
                 ignored_files: config.get_ignored_files()?,
             },
             PooledSqliteConnectionManager::try_from(&config)?,

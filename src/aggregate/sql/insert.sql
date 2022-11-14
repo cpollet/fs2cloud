@@ -1,0 +1,1 @@
+insert into aggregates (aggregate_path, file_path) values (:aggregate_path, :file_path)

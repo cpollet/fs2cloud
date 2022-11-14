@@ -23,6 +23,7 @@ impl From<(&File, Vec<Chunk>)> for JsonFile {
             size: file.size,
             sha256: file.sha256.clone(),
             chunks: chunks.iter().map(JsonChunk::from).collect(),
+            mode: file.mode.clone(),
         }
     }
 }
@@ -31,9 +32,10 @@ impl From<(&File, Vec<Chunk>)> for JsonFile {
 struct JsonFile {
     uuid: String,
     path: String,
-    size: usize,
+    size: u64,
     sha256: String,
     chunks: Vec<JsonChunk>,
+    mode: String,
 }
 
 impl From<&Chunk> for JsonChunk {
@@ -113,6 +115,7 @@ pub mod import {
             file.sha256.clone(),
             file.size,
             file.chunks.len() as u64,
+            file.mode.clone(),
         ) {
             Err(e) => log::error!("Could not import file {}: {}", file.path, e),
             Ok(db_file) => {

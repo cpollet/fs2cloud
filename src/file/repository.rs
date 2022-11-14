@@ -10,9 +10,10 @@ use uuid::Uuid;
 pub struct File {
     pub uuid: Uuid,
     pub path: String,
-    pub size: usize,
+    pub size: u64,
     pub sha256: String,
     pub chunks: u64,
+    pub mode: String,
 }
 
 impl From<&Row<'_>> for File {
@@ -24,6 +25,7 @@ impl From<&Row<'_>> for File {
             sha256: row.get(2).unwrap(),
             size: row.get(3).unwrap(),
             chunks: row.get(4).unwrap(),
+            mode: row.get(5).unwrap(),
         }
     }
 }
@@ -34,15 +36,16 @@ pub struct Repository {
 
 impl Repository {
     pub fn new(pool: Pool<SqliteConnectionManager>) -> Self {
-        Repository { pool }
+        Self { pool }
     }
 
     pub fn insert(
         &self,
         path: String,
         sha256: String,
-        size: usize,
+        size: u64,
         chunks: u64,
+        mode: String,
     ) -> Result<File, Error> {
         let file = File {
             uuid: Uuid::new_v4(),
@@ -50,6 +53,7 @@ impl Repository {
             sha256,
             size,
             chunks,
+            mode,
         };
         self.pool
             .get()
@@ -62,6 +66,7 @@ impl Repository {
                     (":sha256", &file.sha256),
                     (":size", &file.size.to_string()),
                     (":chunks", &file.chunks.to_string()),
+                    (":mode", &file.mode),
                 ],
             )
             .map_err(Error::from)
@@ -94,14 +99,46 @@ impl Repository {
             .map_err(Error::from)
     }
 
-    pub fn list_by_status(&self, status: &str) -> Result<Vec<File>, Error> {
+    pub fn find_by_status(&self, status: &str) -> Result<Vec<File>, Error> {
         let connection = self.pool.get().map_err(Error::from)?;
 
         let mut stmt = connection
-            .prepare(include_str!("sql/list_by_status.sql"))
+            .prepare(include_str!("sql/find_by_status.sql"))
             .map_err(Error::from)?;
 
         let rows = stmt.query(&[(":status", status)]).map_err(Error::from)?;
+
+        rows.map(|row| Ok(row.into()))
+            .collect()
+            .map_err(Error::from)
+    }
+
+    pub fn find_by_status_and_mode(&self, status: &str, mode: &str) -> Result<Vec<File>, Error> {
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        let mut stmt = connection
+            .prepare(include_str!("sql/find_by_status_and_mode.sql"))
+            .map_err(Error::from)?;
+
+        let rows = stmt
+            .query(&[(":status", status), (":mode", mode)])
+            .map_err(Error::from)?;
+
+        rows.map(|row| Ok(row.into()))
+            .collect()
+            .map_err(Error::from)
+    }
+
+    pub fn find_by_status_and_min_size(&self, status: &str, size: u64) -> Result<Vec<File>, Error> {
+        let connection = self.pool.get().map_err(Error::from)?;
+
+        let mut stmt = connection
+            .prepare(include_str!("sql/find_by_status_and_min_size.sql"))
+            .map_err(Error::from)?;
+
+        let rows = stmt
+            .query(&[(":status", status), (":size", &size.to_string())])
+            .map_err(Error::from)?;
 
         rows.map(|row| Ok(row.into()))
             .collect()
@@ -115,6 +152,17 @@ impl Repository {
                 (":uuid", &uuid.to_string()),
                 (":sha256", &sha256.to_string()),
             ],
+        ) {
+            Ok(0) => Err(Error::new(&format!("File {} not found in DB", uuid))),
+            Ok(_) => Ok(()),
+            Err(e) => Err(Error::from(e)),
+        }
+    }
+
+    pub fn mark_aggregated(&self, uuid: &Uuid) -> Result<(), Error> {
+        match self.pool.get()?.execute(
+            include_str!("sql/mark_aggregated.sql"),
+            &[(":uuid", &uuid.to_string())],
         ) {
             Ok(0) => Err(Error::new(&format!("File {} not found in DB", uuid))),
             Ok(_) => Ok(()),

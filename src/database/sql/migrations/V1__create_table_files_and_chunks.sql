@@ -3,9 +3,10 @@ create table files
     uuid   varchar primary key,
     path   varchar,
     sha256 varchar,
-    size   number,
+    size   number,  -- file size
     chunks number,
     status varchar, -- upload status: PENDING, SUCCESS, ERROR
+    mode   varchar, -- how is the file stored: CHUNKED, AGGREGATED, AGGREGATE
     unique (path)
 );
 
@@ -28,4 +29,10 @@ create table inodes
     parent_id number,
     file_uuid varchar,
     name      varchar
-)
+);
+
+create table aggregates
+(
+    aggregate_path varchar, -- the aggregate file path
+    file_path      varchar  -- the aggregated file
+);

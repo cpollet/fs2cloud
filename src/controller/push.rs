@@ -1,3 +1,4 @@
+use crate::aggregate::repository::Repository as AggregatesRepository;
 use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository};
 use crate::chunk::{Chunk, ClearChunk, Metadata};
 use crate::file::repository::{File as DbFile, Repository as FilesRepository};
@@ -7,9 +8,10 @@ use crate::store::Store;
 use crate::{Pgp, PooledSqliteConnectionManager, ThreadPool};
 use std::collections::HashMap;
 use std::fs;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Cursor, Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tar::Builder;
 use tokio::runtime::Runtime;
 use uuid::Uuid;
 
@@ -28,7 +30,8 @@ pub fn execute(
     Push {
         root_folder: config.root_folder,
         files_repository: Arc::new(FilesRepository::new(sqlite.clone())),
-        chunks_repository: Arc::new(ChunksRepository::new(sqlite)),
+        chunks_repository: Arc::new(ChunksRepository::new(sqlite.clone())),
+        aggregates_repository: AggregatesRepository::new(sqlite),
         pgp: Arc::new(pgp),
         store: Arc::new(store),
         thread_pool,
@@ -43,6 +46,7 @@ struct Push<'a> {
     root_folder: &'a str,
     files_repository: Arc<FilesRepository>,
     chunks_repository: Arc<ChunksRepository>,
+    aggregates_repository: AggregatesRepository,
     pgp: Arc<Pgp>,
     store: Arc<Box<dyn Store>>,
     thread_pool: ThreadPool,
@@ -81,8 +85,11 @@ impl<'a> Push<'a> {
             },
         ));
 
-        log::info!("Processing files...");
-        let files = match self.files_repository.list_by_status("PENDING") {
+        log::info!("Processing chunked files...");
+        let files = match self
+            .files_repository
+            .find_by_status_and_mode("PENDING", "CHUNCKED")
+        {
             Err(e) => {
                 log::error!("error loading files: {}", e);
                 return;
@@ -117,9 +124,85 @@ impl<'a> Push<'a> {
                 self.process_chunk(&mut source, &file, &chunk);
             }
         }
+
+        log::info!("Processing aggregate files...");
+        let aggregates = match self
+            .files_repository
+            .find_by_status_and_mode("PENDING", "AGGREGATE")
+        {
+            Err(e) => {
+                log::error!("error loading files: {}", e);
+                return;
+            }
+            Ok(files) => files,
+        };
+
+        for aggregate in aggregates {
+            let mut archive = Builder::new(Vec::new());
+            let files = match self
+                .aggregates_repository
+                .find_by_aggregate_path(&aggregate.path)
+            {
+                Err(e) => {
+                    log::error!("error loading files: {}", e);
+                    continue;
+                }
+                Ok(files) => files,
+            };
+            for file in files {
+                let mut path = PathBuf::from(self.root_folder);
+                path.push(&file.file_path);
+
+                log::info!(
+                    "{}: adding {} as {}",
+                    aggregate.path,
+                    path.display(),
+                    PathBuf::from(&file.file_path).display()
+                );
+
+                match archive.append_path_with_name(path, PathBuf::from(&file.file_path)) {
+                    Ok(_) => {}
+                    Err(e) => {
+                        log::error!("{}: could not add to aggregate: {}", file.file_path, e);
+                        break;
+                    }
+                }
+            }
+
+            if let Err(e) = archive.finish() {
+                log::error!("{}: unable to finish: {}", aggregate.path, e);
+                continue;
+            }
+
+            let data = archive.into_inner().expect("read from memory");
+
+            log::debug!("Archive size: {}", data.len());
+
+            match self
+                .chunks_repository
+                .find_by_file_uuid_and_index(&aggregate.uuid, 0)
+            {
+                Ok(Some(mut chunk)) => {
+                    chunk.payload_size = data.len() as u64;
+                    if let Err(e) = self.chunks_repository.update(&chunk) {
+                        log::error!(
+                            "{}: unable to update chunk payload size: {}",
+                            aggregate.path,
+                            e
+                        );
+                    }
+                    self.process_chunk(&mut Cursor::new(data), &aggregate, &chunk)
+                }
+                Ok(None) => log::error!("{}: unable to find chunk", aggregate.path),
+                Err(e) => log::error!("{}: unable to find chunk: {}", aggregate.path, e),
+            };
+        }
     }
 
-    fn process_chunk(&mut self, source: &mut fs::File, file: &DbFile, chunk: &DbChunk) {
+    fn process_chunk<R>(&mut self, source: &mut R, file: &DbFile, chunk: &DbChunk)
+    where
+        R: Read + Seek,
+    {
         if let Err(e) = source.seek(SeekFrom::Start(chunk.offset)) {
             log::error!(
                 "Error seeking to chunk {} of {}: {}",

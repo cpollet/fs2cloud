@@ -22,7 +22,16 @@ queue_size: 8
 #cache: ...
 
 chunks:
-  size: 50MB
+  # default 100MB
+  size: 500MB
+
+# aggregate small files? files smaller than min_size will be aggregated in blocks of max size (size must be <=
+# chunks.size)
+aggregate:
+  # if not set or set to 0, no aggregation is made
+  min_size: 100MB
+  # if not set, chunks.size is used
+  size: 500MB
 
 pgp:
   # a public key to push, a keypair for pull/fuse

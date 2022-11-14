@@ -43,13 +43,29 @@ impl Config {
     }
 
     pub fn get_chunk_size(&self) -> Byte {
-        Byte::from_str(
-            self.yaml["chunks"]["size"]
-                .as_str()
-                .unwrap_or(DEFAULT_CHUNK_SIZE),
-        )
-        .unwrap()
-        .min(Byte::from_str(MAX_CHUNK_SIZE).unwrap())
+        if let Some(size) = self.yaml["chunks"]["size"].as_str() {
+            Byte::from_str(size)
+                .unwrap()
+                .min(Byte::from_str(MAX_CHUNK_SIZE).unwrap())
+        } else {
+            Byte::from_str(DEFAULT_CHUNK_SIZE).unwrap()
+        }
+    }
+
+    pub fn get_aggregate_min_size(&self) -> Byte {
+        if let Some(size) = self.yaml["aggregate"]["min_size"].as_str() {
+            Byte::from_str(size).unwrap().min(self.get_chunk_size())
+        } else {
+            Byte::from_bytes(0)
+        }
+    }
+
+    pub fn get_aggregate_size(&self) -> Byte {
+        if let Some(size) = self.yaml["aggregate"]["size"].as_str() {
+            Byte::from_str(size).unwrap().min(self.get_chunk_size())
+        } else {
+            self.get_chunk_size()
+        }
     }
 
     pub fn get_pgp_key(&self) -> Result<&str, Error> {

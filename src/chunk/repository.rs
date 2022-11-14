@@ -88,6 +88,27 @@ impl Repository {
             .map(|_| chunk)
     }
 
+    pub fn update(&self, chunk: &Chunk) -> Result<(), Error> {
+        self.pool
+            .get()
+            .map_err(Error::from)?
+            .execute(
+                include_str!("sql/update.sql"),
+                &[
+                    (":uuid", &chunk.uuid.to_string()),
+                    (":file_uuid", &chunk.file_uuid.to_string()),
+                    (":idx", &chunk.idx.to_string()),
+                    (":sha256", &chunk.sha256),
+                    (":offset", &chunk.offset.to_string()),
+                    (":size", &chunk.size.to_string()),
+                    (":payload_size", &chunk.payload_size.to_string()),
+                    (":status", &chunk.status),
+                ],
+            )
+            .map_err(Error::from)?;
+        Ok(())
+    }
+
     pub fn mark_done(&self, uuid: &Uuid, sha256: &str, size: u64) -> Result<(), Error> {
         match self
             .pool

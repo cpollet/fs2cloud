@@ -1,0 +1,1 @@
+select aggregate_path, file_path from aggregates where file_path=:path
