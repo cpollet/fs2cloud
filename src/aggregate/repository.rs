@@ -1,4 +1,4 @@
-use crate::Error;
+use anyhow::Result;
 use fallible_iterator::FallibleIterator;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
@@ -28,49 +28,42 @@ impl Repository {
         Self { pool }
     }
 
-    pub fn find_by_file_path(&self, path: &str) -> Result<Option<Aggregate>, Error> {
-        self.pool
-            .get()
-            .map_err(Error::from)?
+    pub fn find_by_file_path(&self, path: &str) -> Result<Option<Aggregate>> {
+        Ok(self
+            .pool
+            .get()?
             .query_row(
                 include_str!("sql/find_by_file_path.sql"),
                 &[(":path", path)],
                 |row| Ok(row.into()),
             )
-            .optional()
-            .map_err(Error::from)
+            .optional()?)
     }
 
-    pub fn find_by_aggregate_path(&self, path: &str) -> Result<Vec<Aggregate>, Error> {
-        let connection = self.pool.get().map_err(Error::from)?;
+    pub fn find_by_aggregate_path(&self, path: &str) -> Result<Vec<Aggregate>> {
+        let connection = self.pool.get()?;
 
-        let mut stmt = connection
-            .prepare(include_str!("sql/find_by_aggregate_path.sql"))
-            .map_err(Error::from)?;
+        let mut stmt = connection.prepare(include_str!("sql/find_by_aggregate_path.sql"))?;
 
-        let rows = stmt.query(&[(":path", path)]).map_err(Error::from)?;
+        let rows = stmt.query(&[(":path", path)])?;
 
-        rows.map(|row| Ok(row.into()))
-            .collect()
-            .map_err(Error::from)
+        Ok(rows.map(|row| Ok(row.into())).collect()?)
     }
 
-    pub fn insert(&self, aggregate_path: String, file_path: String) -> Result<Aggregate, Error> {
+    pub fn insert(&self, aggregate_path: String, file_path: String) -> Result<Aggregate> {
         let aggregate = Aggregate {
             aggregate_path,
             file_path,
         };
-        self.pool
-            .get()
-            .map_err(Error::from)?
-            .execute(
-                include_str!("sql/insert.sql"),
-                &[
-                    (":aggregate_path", &aggregate.aggregate_path),
-                    (":file_path", &aggregate.file_path),
-                ],
-            )
-            .map_err(Error::from)
-            .map(|_| aggregate)
+
+        self.pool.get()?.execute(
+            include_str!("sql/insert.sql"),
+            &[
+                (":aggregate_path", &aggregate.aggregate_path),
+                (":file_path", &aggregate.file_path),
+            ],
+        )?;
+
+        Ok(aggregate)
     }
 }

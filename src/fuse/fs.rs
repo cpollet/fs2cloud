@@ -1,12 +1,13 @@
 use crate::fuse::fs::repository::Repository;
-use crate::Error;
+use anyhow::Result;
 use std::ffi::OsStr;
 use std::path::Path;
 use uuid::Uuid;
 
 pub mod repository;
 
-pub fn insert(uuid: &Uuid, path: &Path, repository: &Repository) -> Result<(), Error> {
+pub fn insert(uuid: &Uuid, path: &str, repository: &Repository) -> Result<()> {
+    let path = Path::new(path);
     let mut inode = repository.get_root();
     let parent = path.parent().unwrap_or_else(|| Path::new(""));
     for component in parent.iter() {

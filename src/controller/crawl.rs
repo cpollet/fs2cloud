@@ -3,7 +3,8 @@ use crate::chunk::repository::Repository as ChunksRepository;
 use crate::file::repository::{File, Repository as FilesRepository};
 use crate::file::Mode;
 use crate::fuse::fs::repository::Repository as FsRepository;
-use crate::{Error, PooledSqliteConnectionManager};
+use crate::PooledSqliteConnectionManager;
+use anyhow::{Context, Result};
 use byte_unit::Byte;
 use globset::GlobSet;
 use std::fs;
@@ -25,7 +26,7 @@ struct CurrentAggregate {
     size: u64,
 }
 
-pub fn execute(config: Config, sqlite: PooledSqliteConnectionManager) {
+pub fn execute(config: Config, sqlite: PooledSqliteConnectionManager) -> Result<()> {
     Crawl {
         root_folder: config.root_folder,
         root_path: PathBuf::from(config.root_folder).as_path(),
@@ -39,7 +40,7 @@ pub fn execute(config: Config, sqlite: PooledSqliteConnectionManager) {
         fs_repository: FsRepository::new(sqlite),
         current_aggregate: None,
     }
-    .execute();
+    .execute()
 }
 
 struct Crawl<'a> {
@@ -57,56 +58,60 @@ struct Crawl<'a> {
 }
 
 impl<'a> Crawl<'a> {
-    fn execute(&mut self) {
+    fn execute(&mut self) -> Result<()> {
         log::info!("Scanning files in `{}`...", self.root_folder);
 
-        match fs::read_dir(self.root_folder) {
-            Err(e) => log::error!("{}: error: {}", self.root_folder, e),
-            Ok(dir) => self.visit_dir(&PathBuf::from(self.root_folder), dir),
-        }
+        fs::read_dir(self.root_folder)
+            .with_context(|| "Failed to read root folder")
+            .map(|dir| {
+                self.visit_dir(&PathBuf::from(self.root_folder), dir);
+            })
     }
 
     fn visit_dir(&mut self, path: &Path, dir: ReadDir) {
         for file in dir {
             match file {
-                Err(e) => log::error!("{}: error: {}", path.display(), e),
-                Ok(entry) => self.visit_path(&entry.path()),
-            }
-        }
-    }
-
-    fn visit_path(&mut self, path: &PathBuf) {
-        if let Err(e) = match fs::metadata(path) {
-            Err(e) => Err(e),
-            Ok(metadata) if metadata.is_file() => {
-                self.visit_file(path, &metadata);
-                Ok(())
-            }
-            Ok(metadata) if metadata.is_dir() => match path.read_dir() {
-                Err(e) => Err(e),
-                Ok(dir) => {
-                    self.visit_dir(path, dir);
-                    Ok(())
+                Err(e) => log::error!("Failed to read entry in {}: {:#}", path.display(), e),
+                Ok(entry) => {
+                    if let Err(e) = self.visit_path(&entry.path()) {
+                        log::error!(
+                            "Failed to crawl {}/{}: {:#}",
+                            path.display(),
+                            entry.path().display(),
+                            e
+                        )
+                    }
                 }
-            },
-            Ok(metadata) if metadata.is_symlink() => {
-                log::info!("{}: symlink; skipping", path.display());
-                Ok(())
             }
-            Ok(_) => {
-                log::info!("{}: unknown type; skipping", path.display());
-                Ok(())
-            }
-        } {
-            log::error!("{}: error: {}", path.display(), e)
         }
     }
 
-    fn visit_file(&mut self, path: &Path, metadata: &fs::Metadata) {
+    fn visit_path(&mut self, path: &PathBuf) -> Result<()> {
+        let metadata = fs::metadata(path).with_context(|| "Failed to get metadata")?;
+
+        if metadata.is_file() {
+            return self.visit_file(path, &metadata);
+        }
+
+        if metadata.is_dir() {
+            let dir = path
+                .read_dir()
+                .with_context(|| format!("Failed to read folder {}", path.display()))?;
+            self.visit_dir(path, dir);
+        } else if metadata.is_symlink() {
+            log::info!("{}: symlink; skipping", path.display());
+        } else {
+            log::info!("{}: unknown type; skipping", path.display());
+        }
+        Ok(())
+    }
+
+    fn visit_file(&mut self, path: &Path, metadata: &fs::Metadata) -> Result<()> {
         let file_name = path.file_name().unwrap();
+
         if self.ignored_files.is_match(path) {
             log::debug!("skip {}", file_name.to_str().unwrap());
-            return;
+            return Ok(());
         }
 
         let local_path = path.strip_prefix(self.root_folder).unwrap().to_owned();
@@ -117,35 +122,36 @@ impl<'a> Crawl<'a> {
             Mode::Chunked
         };
 
-        let db_file = match self.files_repository.find_by_path(local_path.as_path()) {
-            Err(e) => {
-                log::error!("{}: error: {}", path.display(), e);
-                return;
-            }
-            Ok(Some(db_file)) => db_file,
-            Ok(None) => {
-                let file = match self.files_repository.insert(
-                    local_path.display().to_string(),
-                    "".into(),
+        let db_file = match self
+            .files_repository
+            .find_by_path(local_path.as_os_str().to_str().unwrap())
+            .with_context(|| "Failed to load files from database")?
+        {
+            Some(db_file) => db_file,
+            None => self
+                .files_repository
+                .insert(
+                    local_path.as_os_str().to_str().unwrap(),
+                    "",
                     metadata.len(),
                     chunks_count,
                     mode,
-                ) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        log::error!("Unable to insert file {}: {}", path.display(), e);
-                        return;
-                    }
-                };
-                if let Err(e) = crate::fuse::fs::insert(
-                    &file.uuid,
-                    path.strip_prefix(self.root_path).unwrap(),
-                    &self.fs_repository,
-                ) {
-                    log::error!("{}: unable to update fuse data: {}", path.display(), e);
-                }
-                file
-            }
+                )
+                .with_context(|| "Failed to insert file in database")
+                .map(|db_file| {
+                    if let Err(e) = crate::fuse::fs::insert(
+                        &db_file.uuid,
+                        path.strip_prefix(self.root_path).unwrap().to_str().unwrap(),
+                        &self.fs_repository,
+                    ) {
+                        log::error!(
+                            "Failed to update fuse data for: {}: {:#}",
+                            path.display(),
+                            e
+                        );
+                    };
+                    db_file
+                })?,
         };
         log::info!(
             "{}: size {}; uuid {}, {} chunks",
@@ -156,24 +162,27 @@ impl<'a> Crawl<'a> {
         );
 
         if metadata.len() >= self.aggregate_min_size {
-            self.large_file(db_file, metadata.len(), chunks_count);
+            self.large_file(db_file, metadata.len(), chunks_count)
         } else {
-            self.small_file(db_file, metadata.len());
+            self.small_file(db_file, metadata.len())
         }
     }
 
-    fn large_file(&self, db_file: File, filesize: u64, chunks_count: u64) {
+    fn large_file(&self, db_file: File, filesize: u64, chunks_count: u64) -> Result<()> {
         for chunk_index in 0..chunks_count {
-            match self
+            if (self
                 .chunks_repository
                 .find_by_file_uuid_and_index(&db_file.uuid, chunk_index as u64)
+                .with_context(|| format!("Failed to load chunk {} from database", chunk_index))?)
+            .is_none()
             {
-                Ok(None) => {
-                    let uuid = Uuid::new_v4();
-                    let already_read = chunk_index * self.chunk_size;
-                    let left = filesize - already_read;
+                let uuid = Uuid::new_v4();
+                let already_read = chunk_index * self.chunk_size;
+                let left = filesize - already_read;
 
-                    match self.chunks_repository.insert(
+                let chunk = self
+                    .chunks_repository
+                    .insert(
                         uuid,
                         db_file.uuid,
                         chunk_index,
@@ -181,76 +190,57 @@ impl<'a> Crawl<'a> {
                         chunk_index * self.chunk_size,
                         0,
                         self.chunk_size.min(left),
-                    ) {
-                        Ok(chunk) => {
-                            log::debug!(
-                                "chunk {}/{}: from: {}; to {}; uuid {}",
-                                chunk.idx + 1,
-                                chunks_count,
-                                chunk.offset + 1,
-                                chunk.offset + chunk.payload_size,
-                                uuid
-                            )
-                        }
-                        Err(e) => {
-                            log::error!(
-                                "{}: unable to persist chunk {}: {}",
-                                db_file.path,
-                                chunk_index,
-                                e
-                            )
-                        }
-                    }
-                }
-                Err(e) => log::error!("{}: error with chunk {}: {}", db_file.path, chunk_index, e),
-                _ => {}
+                    )
+                    .with_context(|| format!("Failed to save chunk {} in database", chunk_index))?;
+                log::debug!(
+                    "chunk {}/{}: from: {}; to {}; uuid {}",
+                    chunk.idx + 1,
+                    chunks_count,
+                    chunk.offset + 1,
+                    chunk.offset + chunk.payload_size,
+                    uuid
+                )
             }
         }
+        Ok(())
     }
 
-    fn small_file(&mut self, db_file: File, filesize: u64) {
-        match self.aggregates_repository.find_by_file_path(&db_file.path) {
-            Ok(Some(_)) => return,
-            Ok(None) => {}
-            Err(e) => {
-                log::error!(
-                    "{}: unable to get aggregate information: {}",
-                    db_file.path,
-                    e
-                );
-                return;
-            }
-        }
-
-        let aggregate = match self.get_aggregate_path(filesize) {
-            Ok(uuid) => uuid,
-            Err(e) => {
-                log::error!("{}: unable to get aggregate: {}", db_file.path, e);
-                return;
-            }
-        };
-
-        match self
+    fn small_file(&mut self, db_file: File, filesize: u64) -> Result<()> {
+        if self
             .aggregates_repository
-            .insert(aggregate, db_file.path.clone())
+            .find_by_file_path(&db_file.path)
+            .with_context(|| "Failed to get aggregate information")?
+            .is_some()
         {
-            Ok(_) => {}
-            Err(e) => {
-                log::error!("{}: unable to save aggregate: {}", db_file.path, e);
-            }
+            return Ok(());
         }
+
+        let aggregate = self
+            .get_aggregate_path(filesize)
+            .with_context(|| "Failed to get aggregate")?;
+
+        self.aggregates_repository
+            .insert(aggregate, db_file.path)
+            .with_context(|| "Failed to save aggregate information")
+            .and(Ok(()))
     }
 
-    fn get_aggregate_path(&mut self, filesize: u64) -> Result<String, Error> {
+    fn get_aggregate_path(&mut self, filesize: u64) -> Result<String> {
         fn new_aggregate(
             file_repository: &FilesRepository,
             chunks_repository: &ChunksRepository,
             filesize: u64,
-        ) -> Result<CurrentAggregate, Error> {
+        ) -> Result<CurrentAggregate> {
             let path = format!("{}.tar", Uuid::new_v4());
-            let db_file =
-                file_repository.insert(path.clone(), "".to_string(), 0, 1, Mode::Aggregate)?;
-            chunks_repository.insert(Uuid::new_v4(), db_file.uuid, 0, "", 0, 0, 0)?;
+
+            let db_file = file_repository
+                .insert(&path, "", 0, 1, Mode::Aggregate)
+                .with_context(|| "Failed to save aggregate file in database")?;
+
+            chunks_repository
+                .insert(Uuid::new_v4(), db_file.uuid, 0, "", 0, 0, 0)
+                .with_context(|| "Failed to save aggregate chunk in database")?;
+
             Ok(CurrentAggregate {
                 path,
                 size: filesize,

@@ -1,5 +1,5 @@
-use crate::error::Error;
 use crate::store::Store;
+use anyhow::{bail, Result};
 use async_trait::async_trait;
 use awscreds::Credentials;
 use s3::Bucket;
@@ -11,19 +11,13 @@ pub struct S3 {
 
 impl S3 {
     // todo should not take Option as parameter
-    pub fn new(
-        region: &str,
-        bucket: &str,
-        key: Option<&str>,
-        secret: Option<&str>,
-    ) -> Result<S3, Error> {
+    pub fn new(region: &str, bucket: &str, key: Option<&str>, secret: Option<&str>) -> Result<S3> {
         Ok(S3 {
             bucket: Bucket::new(
                 bucket,
-                region.parse().map_err(Error::from)?,
-                Credentials::new(key, secret, None, None, None).map_err(Error::from)?,
-            )
-            .map_err(Error::from)?,
+                region.parse()?,
+                Credentials::new(key, secret, None, None, None)?,
+            )?,
         })
     }
 
@@ -34,7 +28,7 @@ impl S3 {
 
 #[async_trait]
 impl Store for S3 {
-    async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
+    async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<()> {
         log::debug!("{}: start upload", object_id);
         let (_, code) = self.bucket.put_object(Self::path(object_id), data)?;
         match code {
@@ -42,12 +36,12 @@ impl Store for S3 {
                 log::debug!("{}: upload completed", object_id);
                 Ok(())
             }
-            403 => Err(Error::new("S3: invalid credentials")),
-            _ => Err(Error::new("S3: error")),
+            403 => bail!("S3: invalid credentials"),
+            _ => bail!("S3: error"),
         }
     }
 
-    async fn get(&self, _object_id: Uuid) -> Result<Vec<u8>, Error> {
+    async fn get(&self, _object_id: Uuid) -> Result<Vec<u8>> {
         todo!()
     }
 }

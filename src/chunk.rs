@@ -2,7 +2,8 @@ use crate::hash::ChunkedSha256;
 use crate::metrics::Metric;
 use crate::status::Status;
 use crate::store::Store;
-use crate::{ChunksRepository, Error, FilesRepository, Pgp};
+use crate::{ChunksRepository, FilesRepository, Pgp};
+use anyhow::{bail, Context, Error, Result};
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use std::fmt::{Debug, Formatter};
@@ -31,7 +32,7 @@ pub trait Chunk {
 }
 
 pub trait EncryptedChunk {
-    fn decrypt(self, pgp: &Pgp) -> Result<ClearChunk, Error>;
+    fn decrypt(self, pgp: &Pgp) -> Result<ClearChunk>;
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -94,20 +95,15 @@ impl ClearChunk {
         }
     }
 
-    pub fn encrypt(self, pgp: &Pgp) -> Result<LocalEncryptedChunk, Error> {
+    pub fn encrypt(self, pgp: &Pgp) -> Result<LocalEncryptedChunk> {
         let bytes = Vec::<u8>::try_from(&self).unwrap();
         let mut writer = Vec::<u8>::with_capacity(bytes.len());
-        if let Err(e) = pgp.encrypt(&mut bytes.as_slice(), &mut writer) {
-            Err(Error::new(&format!(
-                "{}: unable to encrypt chunk {}: {}",
-                self.metadata.file, self.metadata.idx, e
-            )))
-        } else {
-            Ok(LocalEncryptedChunk {
-                chunk: self,
-                payload: writer,
-            })
-        }
+        pgp.encrypt(&mut bytes.as_slice(), &mut writer)
+            .with_context(|| "Failed to encrypt")?;
+        Ok(LocalEncryptedChunk {
+            chunk: self,
+            payload: writer,
+        })
     }
 }
 
@@ -143,11 +139,10 @@ impl TryFrom<&Vec<u8>> for ClearChunk {
 
     fn try_from(value: &Vec<u8>) -> Result<Self, Self::Error> {
         if value[0] != 1 {
-            Err(Error::new(&format!("unsupported version: {}", value[0])))
-        } else {
-            // todo check options
-            bincode::deserialize(value).map_err(Error::from)
+            bail!("Unsupported version: {}", value[0])
         }
+        // todo check options
+        Ok(bincode::deserialize(value)?)
     }
 }
 
@@ -163,86 +158,65 @@ pub struct LocalEncryptedChunk {
 }
 
 impl LocalEncryptedChunk {
-    pub fn push(&self, store: Arc<Box<dyn Store>>, runtime: Arc<Runtime>) -> Result<&Self, Error> {
-        if let Err(e) = runtime.block_on(store.put(self.chunk.uuid, self.payload.as_slice())) {
-            Err(Error::new(&format!(
-                "{}: unable to upload chunk {}: {}",
-                self.chunk.metadata.file.clone(),
-                self.chunk.metadata.idx,
-                e
-            )))
-        } else {
-            Ok(self)
-        }
+    pub fn push(self, store: Arc<Box<dyn Store>>, runtime: Arc<Runtime>) -> Result<Self> {
+        runtime
+            .block_on(store.put(self.chunk.uuid, self.payload.as_slice()))
+            .with_context(|| "Failed to upload")?;
+        Ok(self)
     }
 
     pub fn finalize(
-        &self,
+        self,
         files_repository: Arc<FilesRepository>,
         chunks_repository: Arc<ChunksRepository>,
         hash: Arc<Mutex<ChunkedSha256>>,
         sender: &Sender<Metric>,
-    ) -> Result<&Self, Error> {
-        if let Err(e) = chunks_repository.mark_done(
-            &self.uuid(),
-            &self.chunk.sha256(),
-            self.payload.len() as u64,
-        ) {
-            return Err(Error::new(&format!(
-                "{}: unable to finalize chunk {}: {}",
-                self.metadata().file,
-                self.metadata().idx,
-                e
-            )));
+    ) -> Result<Self> {
+        chunks_repository
+            .mark_done(
+                &self.uuid(),
+                &self.chunk.sha256(),
+                self.payload.len() as u64,
+            )
+            .with_context(|| "Failed to finalize chunk")?;
+
+        let chunks = chunks_repository
+            .find_siblings_by_uuid(&self.uuid())
+            .with_context(|| "Failed to finalize file")?;
+
+        if chunks.is_empty() {
+            bail!("Failed to finalize file: no chunks found in database");
         }
 
-        match chunks_repository.find_siblings_by_uuid(&self.uuid()) {
-            Err(e) => Err(Error::new(&format!(
-                "{} unable to finalize: {}",
-                self.metadata().file,
-                e
-            ))),
-            Ok(chunks) if chunks.is_empty() => Err(Error::new(&format!(
-                "{} unable to finalize",
-                self.metadata().file,
-            ))),
-            Ok(chunks) => {
-                let file_uuid = chunks.get(0).map(|chunk| chunk.file_uuid).unwrap();
+        let file_uuid = chunks
+            .get(0)
+            .map(|chunk| chunk.file_uuid)
+            .expect("chunks is not empty");
 
-                let mut hash = hash.lock().unwrap();
-                hash.update(self.chunk.payload.as_slice(), self.chunk.metadata.idx);
+        let mut hash = hash.lock().unwrap();
+        hash.update(self.chunk.payload.as_slice(), self.chunk.metadata.idx);
 
-                if chunks
-                    .iter()
-                    .filter(|chunk| chunk.status != Status::Done)
-                    .count()
-                    == 0
-                {
-                    let sha256 = match hash.finalize() {
-                        None => {
-                            log::error!("{} could not compute sha256", self.chunk.metadata.file);
-                            "".to_string()
-                        }
-                        Some(sha256) => sha256,
-                    };
-                    let _ = sender.send(Metric::FileProcessed);
-
-                    match files_repository.mark_done(&file_uuid, &sha256) {
-                        Err(e) => Err(Error::new(&format!(
-                            "{} unable to finalize: {}",
-                            self.metadata().file,
-                            e
-                        ))),
-                        Ok(_) => {
-                            log::info!("{} done", self.metadata().file);
-                            Ok(self)
-                        }
-                    }
-                } else {
-                    Ok(self)
+        if 0 == chunks
+            .iter()
+            .filter(|chunk| chunk.status != Status::Done)
+            .count()
+        {
+            let sha256 = match hash.finalize() {
+                None => {
+                    log::warn!("Failed to compute sha256 of {}", self.chunk.metadata.file);
+                    "".to_string()
                 }
-            }
+                Some(sha256) => sha256,
+            };
+            let _ = sender.send(Metric::FileProcessed);
+
+            files_repository
+                .mark_done(&file_uuid, &sha256)
+                .with_context(|| "Failed to finalize file")?;
+
+            log::info!("{} done", self.metadata().file);
         }
+        Ok(self)
     }
 }
 
@@ -265,7 +239,7 @@ impl Chunk for LocalEncryptedChunk {
 }
 
 impl EncryptedChunk for LocalEncryptedChunk {
-    fn decrypt(self, _pgp: &Pgp) -> Result<ClearChunk, Error> {
+    fn decrypt(self, _pgp: &Pgp) -> Result<ClearChunk> {
         Ok(self.chunk)
     }
 }
@@ -281,7 +255,7 @@ impl From<Vec<u8>> for RemoteEncryptedChunk {
 }
 
 impl EncryptedChunk for RemoteEncryptedChunk {
-    fn decrypt(self, pgp: &Pgp) -> Result<ClearChunk, Error> {
+    fn decrypt(self, pgp: &Pgp) -> Result<ClearChunk> {
         let mut clear_bytes = Vec::with_capacity(self.payload.len());
         match pgp.decrypt(Cursor::new(self.payload), &mut clear_bytes) {
             Ok(_) => {
@@ -294,7 +268,7 @@ impl EncryptedChunk for RemoteEncryptedChunk {
                 );
                 Ok(chunk)
             }
-            Err(e) => Err(Error::new(&format!("Cannot decrypt: {}", e))),
+            Err(e) => bail!("Cannot decrypt: {}", e),
         }
     }
 }

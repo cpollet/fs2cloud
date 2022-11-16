@@ -11,6 +11,7 @@ use crate::file::repository::Repository as FilesRepository;
 use crate::pgp::Pgp;
 use crate::store::Store;
 use crate::thread_pool::ThreadPool;
+use anyhow::{bail, Result};
 use clap::{command, Arg, Command};
 use clap_complete::{generate, Shell};
 use std::io;
@@ -35,13 +36,13 @@ fn main() {
     std::process::exit(match run() {
         Ok(_) => 0,
         Err(e) => {
-            eprintln!("{}", e);
+            log::error!("{:#}", e);
             1
         }
     })
 }
 
-fn run() -> Result<(), Error> {
+fn run() -> Result<()> {
     pretty_env_logger::init();
 
     let matches = cli().get_matches();
@@ -67,6 +68,7 @@ fn run() -> Result<(), Error> {
             } else {
                 let _ = cli.print_long_help();
             }
+            Ok(())
         }
         Some(("crawl", _args)) => crawl::execute(
             crawl::Config {
@@ -79,22 +81,20 @@ fn run() -> Result<(), Error> {
             PooledSqliteConnectionManager::try_from(&config)?,
         ),
         Some(("export", _args)) => {
-            export::execute(PooledSqliteConnectionManager::try_from(&config)?);
+            export::execute(PooledSqliteConnectionManager::try_from(&config)?)
         }
-        Some(("mount", args)) => {
-            mount::execute(
-                mount::Config {
-                    cache_folder: config.get_cache_folder(),
-                    mountpoint: args.value_of("mountpoint").unwrap(),
-                },
-                PooledSqliteConnectionManager::try_from(&config)?,
-                Pgp::try_from(&config)?,
-                Box::<dyn Store>::try_from(&config)?,
-                Builder::new_current_thread().enable_all().build()?,
-            )?;
-        }
+        Some(("mount", args)) => mount::execute(
+            mount::Config {
+                cache_folder: config.get_cache_folder(),
+                mountpoint: args.value_of("mountpoint").unwrap(),
+            },
+            PooledSqliteConnectionManager::try_from(&config)?,
+            Pgp::try_from(&config)?,
+            Box::<dyn Store>::try_from(&config)?,
+            Builder::new_current_thread().enable_all().build()?,
+        ),
         Some(("import", _args)) => {
-            import::execute(PooledSqliteConnectionManager::try_from(&config)?);
+            import::execute(PooledSqliteConnectionManager::try_from(&config)?)
         }
         Some(("push", _args)) => push::execute(
             push::Config {
@@ -109,10 +109,9 @@ fn run() -> Result<(), Error> {
         Some(("unwrap", args)) => {
             unwrap::execute(args.value_of("path").unwrap(), Pgp::try_from(&config)?)
         }
-        Some((command, _)) => log::error!("Invalid command: {}", command),
-        None => log::error!("No command provided."),
+        Some((command, _)) => bail!("Invalid command: {}", command),
+        None => bail!("No command provided."),
     }
-    Ok(())
 }
 
 fn cli() -> Command<'static> {

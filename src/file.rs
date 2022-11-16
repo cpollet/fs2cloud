@@ -1,9 +1,13 @@
+use anyhow::{bail, Error, Result};
+
 pub mod repository;
 
 #[derive(Debug)]
 pub enum Mode {
     Chunked,
+    // todo rename
     Aggregate,
+    // todo rename
     Aggregated,
 }
 
@@ -18,14 +22,14 @@ impl From<&Mode> for &str {
 }
 
 impl TryFrom<&str> for Mode {
-    type Error = String;
+    type Error = Error;
 
-    fn try_from(value: &str) -> Result<Self, Self::Error> {
+    fn try_from(value: &str) -> Result<Self> {
         match value {
             "CHUNKED" => Ok(Mode::Chunked),
             "AGGREGATE" => Ok(Mode::Aggregate),
             "AGGREGATED" => Ok(Mode::Aggregated),
-            s => Err(format!("Not a mode: {}", s)),
+            s => bail!("Not a mode: {}", s),
         }
     }
 }

@@ -4,6 +4,7 @@ use crate::file::repository::Repository as FilesRepository;
 use crate::fuse::fs::repository::{Inode, Repository as FsRepository};
 use crate::store::Store;
 use crate::{Error, Pgp, PooledSqliteConnectionManager};
+use anyhow::{Context, Result};
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
     Request,
@@ -30,7 +31,7 @@ pub fn execute(
     pgp: Pgp,
     store: Box<dyn Store>,
     runtime: Runtime,
-) -> Result<(), Error> {
+) -> Result<()> {
     let options = vec![MountOption::RO, MountOption::FSName("fs2cloud".to_string())];
 
     if let Some(path) = config.cache_folder {
@@ -47,10 +48,8 @@ pub fn execute(
         runtime: Arc::new(runtime),
     };
 
-    let fs_handle = match fuser::spawn_mount2(fs, PathBuf::from(config.mountpoint), &options) {
-        Ok(h) => h,
-        Err(e) => panic!("Unable to start FS thread: {}", e),
-    };
+    let fs_handle = fuser::spawn_mount2(fs, PathBuf::from(config.mountpoint), &options)
+        .with_context(|| "Unable to start FS thread")?;
 
     log::info!("FS mounted. CTRL+C to unmount");
     let mut signals = match Signals::new([SIGINT]) {
@@ -240,7 +239,7 @@ impl Filesystem for Fs2CloudFS {
 }
 
 impl Fs2CloudFS {
-    fn read_from_store(&self, chunk: &DbChunk) -> Result<Vec<u8>, Error> {
+    fn read_from_store(&self, chunk: &DbChunk) -> Result<Vec<u8>> {
         self.read_from_cache(&chunk.uuid)
             .map(Ok)
             .unwrap_or_else(|| {
@@ -296,7 +295,7 @@ impl Inode {
     fn file_attr(&self, files_repository: &FilesRepository) -> FileAttr {
         if self.is_file() {
             let file = files_repository
-                .find_by_uuid(self.file_uuid.unwrap())
+                .find_by_uuid(&self.file_uuid.unwrap())
                 .unwrap()
                 .unwrap();
             FileAttr {

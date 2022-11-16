@@ -1,5 +1,5 @@
-use crate::error::Error;
 use crate::Config;
+use anyhow::{bail, Context, Error, Result};
 use sequoia_openpgp::cert::prelude::ValidErasedKeyAmalgamation;
 use sequoia_openpgp::crypto::{KeyPair, SessionKey};
 use sequoia_openpgp::packet::key::{PublicParts, SecretParts, UnspecifiedRole};
@@ -26,12 +26,11 @@ pub struct Pgp {
 }
 
 impl Pgp {
-    pub fn new(key: &str, passphrase: Option<&str>, ascii_armor: bool) -> Result<Self, Error> {
-        Self::new_internal(key, passphrase, ascii_armor)
-            .map_err(|e| Error::new(&format!("Error configuring PGP: {}", e)))
+    pub fn new(key: &str, passphrase: Option<&str>, ascii_armor: bool) -> Result<Self> {
+        Self::new_internal(key, passphrase, ascii_armor).with_context(|| "Error configuring PGP")
     }
 
-    fn new_internal(key: &str, passphrase: Option<&str>, ascii_armor: bool) -> Result<Self, Error> {
+    fn new_internal(key: &str, passphrase: Option<&str>, ascii_armor: bool) -> Result<Self> {
         let policy = StandardPolicy::new();
         let mode = KeyFlags::empty()
             .set_transport_encryption()
@@ -50,10 +49,7 @@ impl Pgp {
         for key in keys {
             match Self::decrypt_secret_part(&key, passphrase) {
                 Ok(Some(key)) => {
-                    secret_keys.insert(
-                        key.keyid(),
-                        (cert.fingerprint(), key.into_keypair().map_err(Error::from)?),
-                    );
+                    secret_keys.insert(key.keyid(), (cert.fingerprint(), key.into_keypair()?));
                 }
                 Ok(None) => {
                     public_keys.insert(key.keyid(), (cert.fingerprint(), key.key().clone()));
@@ -81,25 +77,24 @@ impl Pgp {
     fn decrypt_secret_part(
         key: &ValidErasedKeyAmalgamation<PublicParts>,
         passphrase: Option<&str>,
-    ) -> Result<Option<Key<SecretParts, UnspecifiedRole>>, Error> {
+    ) -> Result<Option<Key<SecretParts, UnspecifiedRole>>> {
         if !key.has_secret() {
             return Ok(None);
         }
 
         match passphrase {
-            None => Err(Error::new("no passphrase given")),
+            None => bail!("No passphrase given"),
             Some(passphrase) => key
                 .clone()
                 .parts_into_secret()?
                 .key()
                 .to_owned()
                 .decrypt_secret(&passphrase.into())
-                .map_err(Error::from)
                 .map(Option::from),
         }
     }
 
-    pub fn encrypt<R, W>(&self, reader: &mut R, writer: &mut W) -> Result<usize, Error>
+    pub fn encrypt<R, W>(&self, reader: &mut R, writer: &mut W) -> Result<usize>
     where
         R: Read,
         W: Write + Send + Sync,
@@ -115,10 +110,8 @@ impl Pgp {
         let mut message = LiteralWriter::new(message).build()?;
 
         let read = io::copy(reader, &mut message)?;
-        match message.finalize().map_err(Error::from) {
-            Ok(_) => Ok(read as usize),
-            Err(e) => Err(e),
-        }
+        message.finalize()?;
+        Ok(read as usize)
     }
 
     fn get_recipients(&self) -> Vec<Recipient> {
@@ -134,7 +127,7 @@ impl Pgp {
         recipients
     }
 
-    pub fn decrypt<R, W>(&self, reader: R, writer: &mut W) -> Result<usize, Error>
+    pub fn decrypt<R, W>(&self, reader: R, writer: &mut W) -> Result<usize>
     where
         R: Read + Send + Sync,
         W: Write,
@@ -193,13 +186,11 @@ impl TryFrom<&Config> for Pgp {
     type Error = Error;
 
     fn try_from(config: &Config) -> Result<Self, Self::Error> {
-        match Pgp::new(
+        Pgp::new(
             config.get_pgp_key()?,
             config.get_pgp_passphrase(),
             config.get_pgp_armor(),
-        ) {
-            Ok(pgp) => Ok(pgp),
-            Err(e) => Err(Error::new(&format!("unable to instantiate pgp: {}", e))),
-        }
+        )
+        .with_context(|| "Unable to instantiate PGP")
     }
 }

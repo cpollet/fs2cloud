@@ -1,5 +1,5 @@
 use crate::store::Store;
-use crate::Error;
+use anyhow::Result;
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -13,12 +13,12 @@ impl Log {
 
 #[async_trait]
 impl Store for Log {
-    async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
+    async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<()> {
         log::info!("WRITE {} ({} bytes)", object_id, data.len());
         Ok(())
     }
 
-    async fn get(&self, object_id: Uuid) -> Result<Vec<u8>, Error> {
+    async fn get(&self, object_id: Uuid) -> Result<Vec<u8>> {
         log::info!("READ {}", object_id);
         Ok(vec![])
     }

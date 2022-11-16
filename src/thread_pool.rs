@@ -1,3 +1,4 @@
+use anyhow::{bail, Result};
 use std::sync::{mpsc, Arc, Mutex};
 use std::thread;
 use std::thread::JoinHandle;
@@ -37,12 +38,17 @@ impl ThreadPool {
         }
     }
 
-    pub fn execute<F>(&self, f: F)
+    pub fn execute<F>(&self, f: F) -> Result<()>
     where
         F: FnOnce() + 'static + Send,
     {
         let job = Message::Job(Box::new(f));
-        self.sender.send(job).unwrap();
+        match self.sender.send(job) {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                bail!("Unable to start job: {:#}", e)
+            }
+        }
     }
 }
 
@@ -97,7 +103,7 @@ mod tests {
     fn it_works() {
         let p = ThreadPool::new(4, 2);
         println!("job1:queue");
-        p.execute(|| {
+        let _ = p.execute(|| {
             let mut rand = rand::thread_rng();
             let sleep = Duration::from_millis(10000u64 + (1000f32 * rand.gen::<f32>()) as u64);
             println!("job1:start:{}", sleep.as_millis());
@@ -105,7 +111,7 @@ mod tests {
             println!("job1: done");
         });
         println!("job2:queue");
-        p.execute(|| {
+        let _ = p.execute(|| {
             let mut rand = rand::thread_rng();
             let sleep = Duration::from_millis(10000u64 + (1000f32 * rand.gen::<f32>()) as u64);
             println!("job2:start:{}", sleep.as_millis());
@@ -113,7 +119,7 @@ mod tests {
             println!("job2: done");
         });
         println!("job3:queue");
-        p.execute(|| {
+        let _ = p.execute(|| {
             let mut rand = rand::thread_rng();
             let sleep = Duration::from_millis(10000u64 + (1000f32 * rand.gen::<f32>()) as u64);
             println!("job3:start:{}", sleep.as_millis());
@@ -121,7 +127,7 @@ mod tests {
             println!("job3: done");
         });
         println!("job4:queue");
-        p.execute(|| {
+        let _ = p.execute(|| {
             let mut rand = rand::thread_rng();
             let sleep = Duration::from_millis(10000u64 + (1000f32 * rand.gen::<f32>()) as u64);
             println!("job4:start:{}", sleep.as_millis());
@@ -129,7 +135,7 @@ mod tests {
             println!("job4: done");
         });
         println!("job5:queue");
-        p.execute(|| {
+        let _ = p.execute(|| {
             let mut rand = rand::thread_rng();
             let sleep = Duration::from_millis(10000u64 + (1000f32 * rand.gen::<f32>()) as u64);
             println!("job5:start:{}", sleep.as_millis());
@@ -137,7 +143,7 @@ mod tests {
             println!("job5: done");
         });
         println!("job6:queue");
-        p.execute(|| {
+        let _ = p.execute(|| {
             let mut rand = rand::thread_rng();
             let sleep = Duration::from_millis(10000u64 + (1000f32 * rand.gen::<f32>()) as u64);
             println!("job6:start:{}", sleep.as_millis());
@@ -145,7 +151,7 @@ mod tests {
             println!("job6: done");
         });
         println!("job7:queue");
-        p.execute(|| {
+        let _ = p.execute(|| {
             let mut rand = rand::thread_rng();
             let sleep = Duration::from_millis(10000u64 + (1000f32 * rand.gen::<f32>()) as u64);
             println!("job7:start:{}", sleep.as_millis());
@@ -153,7 +159,7 @@ mod tests {
             println!("job7: done");
         });
         println!("job8:queue");
-        p.execute(|| {
+        let _ = p.execute(|| {
             let mut rand = rand::thread_rng();
             let sleep = Duration::from_millis(10000u64 + (1000f32 * rand.gen::<f32>()) as u64);
             println!("job8:start:{}", sleep.as_millis());

@@ -1,5 +1,5 @@
-use crate::error::Error;
 use crate::store::Store;
+use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use aws_sdk_s3::model::{CompletedMultipartUpload, CompletedPart};
 use aws_sdk_s3::types::ByteStream;
@@ -19,7 +19,7 @@ pub struct S3Official {
 const MIN_MULTIPART_SIZE: u64 = 5_242_880; // 5 MiB
 
 impl S3Official {
-    pub fn new(bucket: &str, multipart_size: u64) -> Result<S3Official, Error> {
+    pub fn new(bucket: &str, multipart_size: u64) -> Result<S3Official> {
         let config = Builder::new_current_thread()
             .enable_all()
             .build()?
@@ -47,10 +47,9 @@ impl S3Official {
         base64::encode(hasher.finalize())
     }
 
-    async fn upload(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
+    async fn upload(&self, object_id: Uuid, data: &[u8]) -> Result<()> {
         log::debug!("{}: start upload", object_id);
-        match self
-            .client
+        self.client
             .put_object()
             .bucket(&self.bucket)
             .key(Self::path(object_id))
@@ -58,36 +57,27 @@ impl S3Official {
             .checksum_sha256(Self::sha256(data))
             .send()
             .await
-        {
-            Ok(_) => {
-                log::debug!("{}: upload completed", object_id);
-                Ok(())
-            }
-            Err(e) => Err(Error::new(&format!("{}: S3 error: {}", object_id, e))),
-        }
+            .with_context(|| "Failed to upload")?;
+
+        log::debug!("{}: upload completed", object_id);
+        Ok(())
     }
 
-    async fn multipart_upload(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
-        log::debug!("{} start multipart upload", object_id);
-        let upload = match self
+    async fn multipart_upload(&self, object_id: Uuid, data: &[u8]) -> Result<()> {
+        log::debug!("Initialize multipart upload for object {}", object_id);
+        let upload = self
             .client
             .create_multipart_upload()
             .bucket(&self.bucket)
             .key(Self::path(object_id))
             .send()
             .await
-        {
-            Ok(upload) => Ok(upload),
-            Err(e) => Err(Error::new(&format!(
-                "{}: S3 error initiating multipart upload: {}",
-                object_id, e
-            ))),
-        }?;
+            .with_context(|| "Failed to initialize multipart upload")?;
+
         let upload_id = upload.upload_id().unwrap();
 
         let parts_count = (data.len() as f64 / self.multipart_size as f64).ceil() as usize;
         let mut uploading_parts = Vec::with_capacity(parts_count);
-        let mut error = false;
 
         for part in 0..parts_count {
             let from = part * self.multipart_size as usize;
@@ -114,6 +104,7 @@ impl S3Official {
             ));
         }
 
+        let mut error: Option<(usize, Error)> = None;
         let mut uploaded_parts = Vec::with_capacity(parts_count);
         for part in 1..=parts_count {
             match uploading_parts.remove(0).await {
@@ -127,17 +118,20 @@ impl S3Official {
                     );
                 }
                 Ok(Err(e)) => {
-                    error = true;
-                    log::error!("{}: S3 error during part {} upload: {}", object_id, part, e);
+                    error = Some((part, e.into()));
+                    break;
                 }
                 Err(e) => {
-                    error = true;
-                    log::error!("{}: error during part {} upload: {}", object_id, part, e);
+                    error = Some((part, e.into()));
+                    break;
                 }
             }
         }
 
-        if error {
+        if let Some((part, error)) = error {
+            let err = Err(Into::<Error>::into(error))
+                .with_context(|| format!("Failed to upload part {}", part));
+
             match self
                 .client
                 .abort_multipart_upload()
@@ -147,21 +141,21 @@ impl S3Official {
                 .send()
                 .await
             {
-                Ok(_) => Err(Error::new(&format!(
-                    "{}: Aborted multipart upload due to previous S3 error",
-                    object_id
-                ))),
-                Err(e) => Err(Error::new(&format!(
-                    "{}: S3 error aborting multipart upload: {}",
-                    object_id, e
-                ))),
+                Ok(_) => err,
+                Err(e) => {
+                    log::warn!(
+                        "Failed to abort multipart upload of object {}: {}",
+                        object_id,
+                        e
+                    );
+                    err
+                }
             }
         } else {
             let completed_multipart_upload = CompletedMultipartUpload::builder()
                 .set_parts(Some(uploaded_parts))
                 .build();
-            match self
-                .client
+            self.client
                 .complete_multipart_upload()
                 .upload_id(upload_id)
                 .bucket(&self.bucket)
@@ -170,23 +164,16 @@ impl S3Official {
                 .checksum_sha256(Self::sha256(data))
                 .send()
                 .await
-            {
-                Ok(_) => {
-                    log::debug!("{} multipart upload completed", object_id);
-                    Ok(())
-                }
-                Err(e) => Err(Error::new(&format!(
-                    "{}: S3 error completing multipart upload: {}",
-                    object_id, e
-                ))),
-            }
+                .with_context(|| "Failed to complete multipart upload")?;
+            log::debug!("Completed multipart upload of object {}", object_id);
+            Ok(())
         }
     }
 }
 
 #[async_trait]
 impl Store for S3Official {
-    async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error> {
+    async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<()> {
         if data.len() > self.multipart_size as usize {
             self.multipart_upload(object_id, data).await
         } else {
@@ -194,7 +181,7 @@ impl Store for S3Official {
         }
     }
 
-    async fn get(&self, _object_id: Uuid) -> Result<Vec<u8>, Error> {
+    async fn get(&self, _object_id: Uuid) -> Result<Vec<u8>> {
         todo!()
     }
 }

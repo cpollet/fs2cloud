@@ -56,19 +56,31 @@ pub mod export {
     use crate::controller::json::JsonFile;
     use crate::file::repository::Repository as FilesRepository;
     use crate::PooledSqliteConnectionManager;
+    use anyhow::{Context, Result};
 
-    pub fn execute(sqlite: PooledSqliteConnectionManager) {
+    pub fn execute(sqlite: PooledSqliteConnectionManager) -> Result<()> {
         let files_repository = FilesRepository::new(sqlite.clone());
         let chunks_repository = ChunksRepository::new(sqlite);
-        let files: Vec<JsonFile> = files_repository
-            .list_all()
-            .unwrap()
-            .iter()
-            .map(|f| (f, chunks_repository.find_by_file_uuid(&f.uuid).unwrap()))
-            .map(JsonFile::from)
-            .collect();
 
-        println!("{}", serde_json::to_string(&files).unwrap());
+        let mut json_files = Vec::new();
+        for db_file in files_repository
+            .list_all()
+            .with_context(|| "Failed to get files from database")?
+        {
+            let chunks = chunks_repository
+                .find_by_file_uuid(&db_file.uuid)
+                .with_context(|| {
+                    format!("Failed to get chunk of file {} from database", db_file.path)
+                })?;
+
+            json_files.push(Into::<JsonFile>::into((&db_file, chunks)));
+        }
+
+        println!(
+            "{}",
+            serde_json::to_string(&json_files).with_context(|| "Failed to serialize files")?
+        );
+        Ok(())
     }
 }
 
@@ -79,24 +91,25 @@ pub mod import {
     use crate::file::Mode;
     use crate::fuse::fs::repository::Repository as FsRepository;
     use crate::PooledSqliteConnectionManager;
+    use anyhow::{Context, Result};
     use std::io;
-    use std::path::Path;
     use uuid::Uuid;
 
-    pub fn execute(sqlite: PooledSqliteConnectionManager) {
-        let files: Option<Vec<JsonFile>> = serde_json::from_reader(io::stdin()).ok();
-        if let Some(files) = files {
-            for file in files {
-                handle_file(
-                    FilesRepository::new(sqlite.clone()),
-                    ChunksRepository::new(sqlite.clone()),
-                    FsRepository::new(sqlite.clone()),
-                    &file,
-                )
-            }
-        } else {
-            eprintln!("Not able to deserialize input");
-        }
+    pub fn execute(sqlite: PooledSqliteConnectionManager) -> Result<()> {
+        serde_json::from_reader::<_, Vec<JsonFile>>(io::stdin())
+            .with_context(|| "Failed to read from stdin")
+            .map(|files| {
+                for file in files {
+                    if let Err(e) = handle_file(
+                        FilesRepository::new(sqlite.clone()),
+                        ChunksRepository::new(sqlite.clone()),
+                        FsRepository::new(sqlite.clone()),
+                        &file,
+                    ) {
+                        log::error!("Failed to import {}: {:#}", file.path, e);
+                    }
+                }
+            })
     }
 
     fn handle_file(
@@ -104,45 +117,49 @@ pub mod import {
         chunks_repository: ChunksRepository,
         fs_repository: FsRepository,
         file: &JsonFile,
-    ) {
-        let path = Path::new(&file.path);
-        if files_repository.find_by_path(path).unwrap().is_some() {
+    ) -> Result<()> {
+        if files_repository
+            .find_by_path(&file.path)
+            .with_context(|| "Failed to get file from database")?
+            .is_some()
+        {
             log::info!("File {} already exists in database; skipping", file.path);
-            return;
+            return Ok(());
         }
 
-        match files_repository.insert(
-            file.path.clone(),
-            file.sha256.clone(),
-            file.size,
-            file.chunks.len() as u64,
-            Mode::try_from(file.mode.as_str()).unwrap(),
-        ) {
-            Err(e) => log::error!("Could not import file {}: {}", file.path, e),
-            Ok(db_file) => {
-                for chunk in file.chunks.as_slice() {
-                    if let Err(e) = chunks_repository.insert(
-                        Uuid::parse_str(&chunk.uuid).unwrap(),
-                        db_file.uuid,
-                        chunk.idx,
-                        &chunk.sha256,
-                        chunk.offset,
-                        chunk.size,
-                        chunk.payload_size,
-                    ) {
-                        log::error!(
-                            "Could not import chunk {} of file {}: {}",
-                            chunk.idx,
-                            file.path,
-                            e
-                        )
-                    }
-                }
+        let db_file = files_repository
+            .insert(
+                &file.path,
+                &file.sha256,
+                file.size,
+                file.chunks.len() as u64,
+                Mode::try_from(file.mode.as_str()).unwrap(),
+            )
+            .with_context(|| "Failed to insert file in database")?;
 
-                if let Err(e) = crate::fuse::fs::insert(&db_file.uuid, path, &fs_repository) {
-                    log::error!("Cannot insert inode for {}: {}", file.path, e);
-                }
+        for chunk in file.chunks.as_slice() {
+            if let Err(e) = chunks_repository.insert(
+                Uuid::parse_str(&chunk.uuid).unwrap(),
+                db_file.uuid,
+                chunk.idx,
+                &chunk.sha256,
+                chunk.offset,
+                chunk.size,
+                chunk.payload_size,
+            ) {
+                log::error!(
+                    "Failed to import chunk {} of file {}: {:#}",
+                    chunk.idx,
+                    file.path,
+                    e
+                )
             }
         }
+
+        if let Err(e) = crate::fuse::fs::insert(&db_file.uuid, &file.path, &fs_repository) {
+            log::error!("Failed to insert inode for {}: {:#}", file.path, e);
+        }
+
+        Ok(())
     }
 }

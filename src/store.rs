@@ -2,7 +2,8 @@ use crate::store::local::Local;
 use crate::store::log::Log;
 use crate::store::s3::S3;
 use crate::store::s3_official::S3Official;
-use crate::{Config, Error};
+use crate::Config;
+use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use uuid::Uuid;
 
@@ -13,9 +14,9 @@ pub mod s3_official;
 
 #[async_trait]
 pub trait Store: Send + Sync {
-    async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<(), Error>;
+    async fn put(&self, object_id: Uuid, data: &[u8]) -> Result<()>;
 
-    async fn get(&self, object_id: Uuid) -> Result<Vec<u8>, Error>;
+    async fn get(&self, object_id: Uuid) -> Result<Vec<u8>>;
 }
 
 pub enum StoreKind {
@@ -25,27 +26,27 @@ pub enum StoreKind {
     S3Official,
 }
 
-pub fn new(config: &Config) -> Result<Box<dyn Store>, Error> {
-    fn s3(config: &Config) -> Result<Box<dyn Store>, Error> {
-        match S3::new(
-            config.get_s3_region()?,
-            config.get_s3_bucket()?,
-            config.get_s3_access_key(),
-            config.get_s3_secret_key(),
-        ) {
-            Ok(s3) => Ok(Box::from(s3)),
-            Err(e) => Err(Error::new(&format!("Error configuring S3: {}", e))),
-        }
+pub fn new(config: &Config) -> Result<Box<dyn Store>> {
+    fn s3(config: &Config) -> Result<Box<dyn Store>> {
+        Ok(Box::from(
+            S3::new(
+                config.get_s3_region()?,
+                config.get_s3_bucket()?,
+                config.get_s3_access_key(),
+                config.get_s3_secret_key(),
+            )
+            .with_context(|| "Error configuring S3")?,
+        ))
     }
 
-    fn s3_official(config: &Config) -> Result<Box<dyn Store>, Error> {
-        match S3Official::new(
-            config.get_s3_official_bucket()?,
-            config.get_s3_official_multipart_part_size(),
-        ) {
-            Ok(s3) => Ok(Box::from(s3)),
-            Err(e) => Err(Error::new(&format!("Error configuring S3: {}", e))),
-        }
+    fn s3_official(config: &Config) -> Result<Box<dyn Store>> {
+        Ok(Box::from(
+            S3Official::new(
+                config.get_s3_official_bucket()?,
+                config.get_s3_official_multipart_part_size(),
+            )
+            .with_context(|| "Error configuring S3")?,
+        ))
     }
 
     match config.get_store_type() {
@@ -53,7 +54,7 @@ pub fn new(config: &Config) -> Result<Box<dyn Store>, Error> {
         Ok(StoreKind::S3) => s3(config),
         Ok(StoreKind::S3Official) => s3_official(config),
         Ok(StoreKind::Local) => Ok(Box::new(Local::new(config.get_local_store_path()?)?)),
-        Err(e) => Err(Error::new(&format!("Error configuring store: {}", e))),
+        Err(e) => Err(e),
     }
 }
 
@@ -61,9 +62,6 @@ impl TryFrom<&Config> for Box<dyn Store> {
     type Error = Error;
 
     fn try_from(config: &Config) -> Result<Self, Self::Error> {
-        match new(config) {
-            Ok(store) => Ok(store),
-            Err(e) => Err(Error::new(&format!("unable to instantiate store: {}", e))),
-        }
+        new(config).with_context(|| "Unable to instantiate store")
     }
 }

@@ -7,7 +7,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = "1.0.57"
+anyhow = "1.0.66"
 aws-creds = "0.29.1"
 byte-unit = "4.0.14"
 clap = { version = "3.1.18", features = ["cargo"] }
