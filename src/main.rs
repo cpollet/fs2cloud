@@ -3,7 +3,7 @@ extern crate core;
 use crate::chunk::repository::Repository as ChunksRepository;
 use crate::config::Config;
 use crate::controller::json::{export, import};
-use crate::controller::{crawl, mount};
+use crate::controller::{crawl, ls, mount};
 use crate::controller::{push, unwrap};
 use crate::database::PooledSqliteConnectionManager;
 use crate::error::Error;
@@ -96,6 +96,7 @@ fn run() -> Result<()> {
         Some(("import", _args)) => {
             import::execute(PooledSqliteConnectionManager::try_from(&config)?)
         }
+        Some(("ls", _args)) => ls::execute(PooledSqliteConnectionManager::try_from(&config)?),
         Some(("push", _args)) => push::execute(
             push::Config {
                 root_folder: config.get_root_path()?,
@@ -157,6 +158,7 @@ fn cli() -> Command<'static> {
                 ),
         )
         .subcommand(Command::new("import").about("Import database from JSON (reads from stdin)"))
+        .subcommand(Command::new("ls").about("Lists files from database"))
         .subcommand(Command::new("push").about("Copy crawled files to cloud"))
         .subcommand(
             Command::new("unwrap")

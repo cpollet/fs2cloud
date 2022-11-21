@@ -64,7 +64,7 @@ pub mod export {
 
         let mut json_files = Vec::new();
         for db_file in files_repository
-            .list_all()
+            .find_all()
             .with_context(|| "Failed to get files from database")?
         {
             let chunks = chunks_repository

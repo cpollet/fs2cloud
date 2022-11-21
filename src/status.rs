@@ -1,4 +1,7 @@
+use crate::file::Mode;
 use anyhow::{bail, Error, Result};
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef};
+use rusqlite::ToSql;
 use std::fmt::{Display, Formatter};
 
 #[derive(Debug, PartialEq, Eq)]
@@ -34,5 +37,21 @@ impl TryFrom<&str> for Status {
             "DONE" => Ok(Status::Done),
             s => bail!("Not a status: {}", s),
         }
+    }
+}
+
+impl ToSql for Status {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::Borrowed(ValueRef::Text(
+            Into::<&str>::into(self).as_bytes(),
+        )))
+    }
+}
+
+impl FromSql for Status {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        value
+            .as_str()
+            .and_then(|r| Status::try_from(r).map_err(|_| FromSqlError::InvalidType))
     }
 }

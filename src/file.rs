@@ -1,4 +1,6 @@
 use anyhow::{bail, Error, Result};
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef};
+use rusqlite::ToSql;
 
 pub mod repository;
 
@@ -31,5 +33,21 @@ impl TryFrom<&str> for Mode {
             "AGGREGATED" => Ok(Mode::Aggregated),
             s => bail!("Not a mode: {}", s),
         }
+    }
+}
+
+impl ToSql for Mode {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::Borrowed(ValueRef::Text(
+            Into::<&str>::into(self).as_bytes(),
+        )))
+    }
+}
+
+impl FromSql for Mode {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        value
+            .as_str()
+            .and_then(|r| Mode::try_from(r).map_err(|_| FromSqlError::InvalidType))
     }
 }

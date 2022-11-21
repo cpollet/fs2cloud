@@ -4,7 +4,7 @@ use anyhow::{bail, Result};
 use fallible_iterator::FallibleIterator;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
-use rusqlite::{OptionalExtension, Row};
+use rusqlite::{params_from_iter, OptionalExtension, Row};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -25,7 +25,7 @@ impl From<&Row<'_>> for File {
             sha256: row.get(2).unwrap(),
             size: row.get(3).unwrap(),
             chunks: row.get(4).unwrap(),
-            mode: Mode::try_from(row.get::<_, String>(5).unwrap().as_str()).unwrap(),
+            mode: row.get(5).unwrap(),
         }
     }
 }
@@ -79,6 +79,23 @@ impl Repository {
             .optional()?)
     }
 
+    pub fn find_by_mode(&self, modes: Vec<Mode>) -> Result<Vec<File>> {
+        let connection = self.pool.get()?;
+
+        let placeholders = modes
+            .iter()
+            .map(|_| "?".to_string())
+            .collect::<Vec<String>>()
+            .join(",");
+        let mut stmt = connection.prepare(
+            &(include_str!("sql/find_by_mode.sql").to_string() + "(" + &placeholders + ")"),
+        )?;
+
+        let rows = stmt.query(params_from_iter(modes))?;
+
+        Ok(rows.map(|row| Ok(row.into())).collect()?)
+    }
+
     pub fn find_by_status_and_mode(&self, status: Status, mode: Mode) -> Result<Vec<File>> {
         let connection = self.pool.get()?;
 
@@ -115,10 +132,10 @@ impl Repository {
         }
     }
 
-    pub fn list_all(&self) -> Result<Vec<File>> {
+    pub fn find_all(&self) -> Result<Vec<File>> {
         let connection = self.pool.get()?;
 
-        let mut stmt = connection.prepare(include_str!("sql/list_all.sql"))?;
+        let mut stmt = connection.prepare(include_str!("sql/find_all.sql"))?;
 
         let rows = stmt.query([])?;
 
@@ -130,11 +147,7 @@ impl Repository {
 
         let mut stmt = connection.prepare("select count(*) from files where status = :status")?;
 
-        Ok(
-            stmt.query_row(&[(":status", Into::<&str>::into(&status))], |row| {
-                row.get::<_, u64>(0)
-            })?,
-        )
+        Ok(stmt.query_row(&[(":status", &status)], |row| row.get::<_, u64>(0))?)
     }
 
     pub fn count_bytes_by_status(&self, status: Status) -> Result<u64> {
@@ -142,10 +155,6 @@ impl Repository {
 
         let mut stmt = connection.prepare("select sum(size) from files where status = :status")?;
 
-        Ok(
-            stmt.query_row(&[(":status", Into::<&str>::into(&status))], |row| {
-                row.get::<_, u64>(0)
-            })?,
-        )
+        Ok(stmt.query_row(&[(":status", &status)], |row| row.get::<_, u64>(0))?)
     }
 }
