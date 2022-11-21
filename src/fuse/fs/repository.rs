@@ -85,12 +85,7 @@ impl Repository {
             .optional()?)
     }
 
-    pub fn insert_inode(
-        &self,
-        name: &str,
-        parent_id: u64,
-        file_uuid: Option<&Uuid>,
-    ) -> Result<()> {
+    pub fn insert_inode(&self, name: &str, parent_id: u64, file_uuid: Option<&Uuid>) -> Result<()> {
         log::debug!(
             "Insert {} with name {} as child of {}",
             file_uuid
@@ -105,7 +100,10 @@ impl Repository {
         match file_uuid {
             None => connection.execute(
                 include_str!("sql/inode_insert.sql"),
-                &[(":parent_id", parent_id.to_string().as_str()), (":name", name)],
+                &[
+                    (":parent_id", parent_id.to_string().as_str()),
+                    (":name", name),
+                ],
             )?,
             Some(uuid) => connection.execute(
                 include_str!("sql/inode_insert.sql"),

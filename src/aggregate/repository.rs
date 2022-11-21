@@ -28,6 +28,18 @@ impl Repository {
         Self { pool }
     }
 
+    pub fn insert(&self, aggregate: &Aggregate) -> Result<()> {
+        self.pool.get()?.execute(
+            include_str!("sql/insert.sql"),
+            &[
+                (":aggregate_path", &aggregate.aggregate_path),
+                (":file_path", &aggregate.file_path),
+            ],
+        )?;
+
+        Ok(())
+    }
+
     pub fn find_by_file_path(&self, path: &str) -> Result<Option<Aggregate>> {
         Ok(self
             .pool
@@ -48,22 +60,5 @@ impl Repository {
         let rows = stmt.query(&[(":path", path)])?;
 
         Ok(rows.map(|row| Ok(row.into())).collect()?)
-    }
-
-    pub fn insert(&self, aggregate_path: String, file_path: String) -> Result<Aggregate> {
-        let aggregate = Aggregate {
-            aggregate_path,
-            file_path,
-        };
-
-        self.pool.get()?.execute(
-            include_str!("sql/insert.sql"),
-            &[
-                (":aggregate_path", &aggregate.aggregate_path),
-                (":file_path", &aggregate.file_path),
-            ],
-        )?;
-
-        Ok(aggregate)
     }
 }

@@ -12,18 +12,14 @@ pub fn insert(uuid: &Uuid, path: &str, repository: &Repository) -> Result<()> {
     let parent = path.parent().unwrap_or_else(|| Path::new(""));
     for component in parent.iter() {
         inode = match repository
-            .get_inode_by_name_and_parent_id(&component.to_str().unwrap().to_string(), inode.id)
+            .get_inode_by_name_and_parent_id(component.to_str().unwrap(), inode.id)
         {
             Ok(inode) => inode,
             Err(e) => return Err(e),
         };
     }
     repository.insert_inode(
-        &path
-            .file_name()
-            .and_then(OsStr::to_str)
-            .unwrap()
-            .to_string(),
+        path.file_name().and_then(OsStr::to_str).unwrap(),
         inode.id,
         Some(uuid),
     )

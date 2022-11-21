@@ -85,11 +85,12 @@ pub mod export {
 }
 
 pub mod import {
-    use crate::chunk::repository::Repository as ChunksRepository;
+    use crate::chunk::repository::{Chunk, Repository as ChunksRepository};
     use crate::controller::json::JsonFile;
-    use crate::file::repository::Repository as FilesRepository;
+    use crate::file::repository::{File, Repository as FilesRepository};
     use crate::file::Mode;
     use crate::fuse::fs::repository::Repository as FsRepository;
+    use crate::status::Status;
     use crate::PooledSqliteConnectionManager;
     use anyhow::{Context, Result};
     use std::io;
@@ -127,26 +128,31 @@ pub mod import {
             return Ok(());
         }
 
-        let db_file = files_repository
-            .insert(
-                &file.path,
-                &file.sha256,
-                file.size,
-                file.chunks.len() as u64,
-                Mode::try_from(file.mode.as_str()).unwrap(),
-            )
+        let db_file = File {
+            uuid: Uuid::new_v4(),
+            path: file.path.clone(),
+            sha256: file.sha256.clone(),
+            size: file.size,
+            chunks: file.chunks.len() as u64,
+            mode: Mode::try_from(file.mode.as_str()).unwrap(),
+        };
+
+        files_repository
+            .insert(&db_file)
             .with_context(|| "Failed to insert file in database")?;
 
         for chunk in file.chunks.as_slice() {
-            if let Err(e) = chunks_repository.insert(
-                Uuid::parse_str(&chunk.uuid).unwrap(),
-                db_file.uuid,
-                chunk.idx,
-                &chunk.sha256,
-                chunk.offset,
-                chunk.size,
-                chunk.payload_size,
-            ) {
+            let db_chunk = Chunk {
+                uuid: Uuid::parse_str(&chunk.uuid).unwrap(),
+                file_uuid: db_file.uuid,
+                idx: chunk.idx,
+                sha256: chunk.sha256.clone(),
+                offset: chunk.offset,
+                size: chunk.size,
+                payload_size: chunk.payload_size,
+                status: Status::Pending, // fixme this is incorrect
+            };
+            if let Err(e) = chunks_repository.insert(&db_chunk) {
                 log::error!(
                     "Failed to import chunk {} of file {}: {:#}",
                     chunk.idx,

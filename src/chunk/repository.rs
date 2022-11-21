@@ -47,26 +47,7 @@ impl Repository {
         Self { pool }
     }
 
-    pub fn insert(
-        &self,
-        uuid: Uuid,
-        file_uuid: Uuid,
-        idx: u64,
-        sha256: &str,
-        offset: u64,
-        size: u64,
-        payload_size: u64,
-    ) -> Result<Chunk> {
-        let chunk = Chunk {
-            uuid,
-            file_uuid,
-            idx,
-            sha256: sha256.into(),
-            offset,
-            size,
-            payload_size,
-            status: Status::Pending,
-        };
+    pub fn insert(&self, chunk: &Chunk) -> Result<()> {
         self.pool.get()?.execute(
             include_str!("sql/insert.sql"),
             &[
@@ -81,10 +62,10 @@ impl Repository {
             ],
         )?;
 
-        Ok(chunk)
+        Ok(())
     }
 
-    pub fn update(&self, chunk: Chunk) -> Result<Chunk> {
+    pub fn update(&self, chunk: &Chunk) -> Result<()> {
         self.pool.get()?.execute(
             include_str!("sql/update.sql"),
             &[
@@ -99,7 +80,7 @@ impl Repository {
             ],
         )?;
 
-        Ok(chunk)
+        Ok(())
     }
 
     pub fn mark_done(&self, uuid: &Uuid, sha256: &str, size: u64) -> Result<()> {
@@ -182,15 +163,10 @@ impl Repository {
 
         let mut stmt = connection.prepare("select count(*) from chunks where status = :status")?;
 
-        let rows = stmt.query(&[(":status", Into::<&str>::into(&status))])?;
-
-        let mut rows = rows.map(|row| row.get(0)).collect::<Vec<u64>>()?;
-
-        // todo query_row()
-        match rows.len() {
-            0 => Ok(0),
-            1 => Ok(rows.remove(0)),
-            _ => bail!("could not get chunks in status {} count", status),
-        }
+        Ok(
+            stmt.query_row(&[(":status", Into::<&str>::into(&status))], |row| {
+                row.get::<_, u64>(0)
+            })?,
+        )
     }
 }

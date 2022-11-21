@@ -20,12 +20,12 @@ pub struct File {
 impl From<&Row<'_>> for File {
     fn from(row: &Row<'_>) -> Self {
         File {
-            uuid: Uuid::parse_str(&row.get::<_,String>(0).unwrap()).unwrap(),
+            uuid: Uuid::parse_str(&row.get::<_, String>(0).unwrap()).unwrap(),
             path: row.get(1).unwrap(),
             sha256: row.get(2).unwrap(),
             size: row.get(3).unwrap(),
             chunks: row.get(4).unwrap(),
-            mode: Mode::try_from(row.get::<_,String>(5).unwrap().as_str()).unwrap(),
+            mode: Mode::try_from(row.get::<_, String>(5).unwrap().as_str()).unwrap(),
         }
     }
 }
@@ -39,22 +39,7 @@ impl Repository {
         Self { pool }
     }
 
-    pub fn insert(
-        &self,
-        path: &str,
-        sha256: &str,
-        size: u64,
-        chunks: u64,
-        mode: Mode,
-    ) -> Result<File> {
-        let file = File {
-            uuid: Uuid::new_v4(),
-            path:path.into(),
-            sha256:sha256.into(),
-            size,
-            chunks,
-            mode,
-        };
+    pub fn insert(&self, file: &File) -> Result<()> {
         self.pool.get()?.execute(
             include_str!("sql/insert.sql"),
             &[
@@ -67,7 +52,7 @@ impl Repository {
             ],
         )?;
 
-        Ok(file)
+        Ok(())
     }
 
     pub fn find_by_path(&self, path: &str) -> Result<Option<File>> {
@@ -145,16 +130,11 @@ impl Repository {
 
         let mut stmt = connection.prepare("select count(*) from files where status = :status")?;
 
-        let rows = stmt.query(&[(":status", Into::<&str>::into(&status))])?;
-
-        let mut rows = rows.map(|row| row.get(0)).collect::<Vec<u64>>()?;
-
-        // todo query_row()
-        match rows.len() {
-            0 => Ok(0),
-            1 => Ok(rows.remove(0)),
-            _ => bail!("could not get files in status {} count", status),
-        }
+        Ok(
+            stmt.query_row(&[(":status", Into::<&str>::into(&status))], |row| {
+                row.get::<_, u64>(0)
+            })?,
+        )
     }
 
     pub fn count_bytes_by_status(&self, status: Status) -> Result<u64> {
@@ -162,15 +142,10 @@ impl Repository {
 
         let mut stmt = connection.prepare("select sum(size) from files where status = :status")?;
 
-        let rows = stmt.query(&[(":status", Into::<&str>::into(&status))])?;
-
-        let mut rows = rows.map(|row| row.get(0)).collect::<Vec<u64>>()?;
-
-        // todo query_row()
-        match rows.len() {
-            0 => Ok(0),
-            1 => Ok(rows.remove(0)),
-            _ => bail!("could not get bytes in status {} count", status),
-        }
+        Ok(
+            stmt.query_row(&[(":status", Into::<&str>::into(&status))], |row| {
+                row.get::<_, u64>(0)
+            })?,
+        )
     }
 }

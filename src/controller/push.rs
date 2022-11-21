@@ -167,12 +167,10 @@ impl<'a> Push<'a> {
                     chunk.payload_size = data.len() as u64;
 
                     self.chunks_repository
-                        .update(chunk)
-                        .with_context(|| "Failed to update payload size of chunk 1/1")
-                        .and_then(|chunk| {
-                            self.process_chunk(&mut Cursor::new(data), &aggregate, &chunk)
-                                .with_context(|| "Failed to process chunk 1/1")
-                        })
+                        .update(&chunk)
+                        .with_context(|| "Failed to update payload size of chunk 1/1")?;
+                    self.process_chunk(&mut Cursor::new(data), &aggregate, &chunk)
+                        .with_context(|| "Failed to process chunk 1/1")
                 })
             {
                 log::error!(
