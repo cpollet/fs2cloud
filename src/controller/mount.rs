@@ -49,7 +49,7 @@ pub fn execute(
     };
 
     let fs_handle = fuser::spawn_mount2(fs, PathBuf::from(config.mountpoint), &options)
-        .with_context(|| "Unable to start FS thread")?;
+        .context("Unable to start FS thread")?;
 
     log::info!("FS mounted. CTRL+C to unmount");
     let mut signals = match Signals::new([SIGINT]) {

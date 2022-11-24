@@ -27,7 +27,7 @@ pub struct Pgp {
 
 impl Pgp {
     pub fn new(key: &str, passphrase: Option<&str>, ascii_armor: bool) -> Result<Self> {
-        Self::new_internal(key, passphrase, ascii_armor).with_context(|| "Error configuring PGP")
+        Self::new_internal(key, passphrase, ascii_armor).context("Error configuring PGP")
     }
 
     fn new_internal(key: &str, passphrase: Option<&str>, ascii_armor: bool) -> Result<Self> {
@@ -191,6 +191,6 @@ impl TryFrom<&Config> for Pgp {
             config.get_pgp_passphrase(),
             config.get_pgp_armor(),
         )
-        .with_context(|| "Unable to instantiate PGP")
+        .context("Unable to instantiate PGP")
     }
 }

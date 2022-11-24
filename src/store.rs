@@ -35,7 +35,7 @@ pub fn new(config: &Config) -> Result<Box<dyn Store>> {
                 config.get_s3_access_key(),
                 config.get_s3_secret_key(),
             )
-            .with_context(|| "Error configuring S3")?,
+            .context("Error configuring S3")?,
         ))
     }
 
@@ -45,7 +45,7 @@ pub fn new(config: &Config) -> Result<Box<dyn Store>> {
                 config.get_s3_official_bucket()?,
                 config.get_s3_official_multipart_part_size(),
             )
-            .with_context(|| "Error configuring S3")?,
+            .context("Error configuring S3")?,
         ))
     }
 
@@ -62,6 +62,6 @@ impl TryFrom<&Config> for Box<dyn Store> {
     type Error = Error;
 
     fn try_from(config: &Config) -> Result<Self, Self::Error> {
-        new(config).with_context(|| "Unable to instantiate store")
+        new(config).context("Unable to instantiate store")
     }
 }

@@ -89,10 +89,10 @@ impl<'a> Push<'a> {
         ));
 
         self.process_chunked_files()
-            .with_context(|| "Failed to process chunked files")?;
+            .context("Failed to process chunked files")?;
 
         self.process_aggregated_files()
-            .with_context(|| "Failed to process aggregated files")?;
+            .context("Failed to process aggregated files")?;
 
         Ok(())
     }
@@ -103,14 +103,14 @@ impl<'a> Push<'a> {
         for db_file in self
             .files_repository
             .find_by_status_and_mode(Status::Pending, Mode::Chunked)
-            .with_context(|| "Failed to load chunked files")?
+            .context("Failed to load chunked files")?
         {
             if let Err(e) = File::open(&self.absolute_path(&db_file.path))
-                .with_context(|| "Failed to open")
+                .context("Failed to open")
                 .map(|mut file| {
                     self.chunks_repository
                         .find_by_file_uuid_and_status(&db_file.uuid, Status::Pending)
-                        .with_context(|| "Failed to load chunks")
+                        .context("Failed to load chunks")
                         .and_then(|chunks| {
                             for chunk in chunks {
                                 self.process_chunk(&mut file, &db_file, &chunk)
@@ -144,16 +144,16 @@ impl<'a> Push<'a> {
         let aggregates = self
             .files_repository
             .find_by_status_and_mode(Status::Pending, Mode::Aggregate)
-            .with_context(|| "Failed to load aggregate files")?;
+            .context("Failed to load aggregate files")?;
 
         for aggregate in aggregates {
             if let Err(e) = self
                 .aggregates_repository
                 .find_by_aggregate_path(&aggregate.path)
-                .with_context(|| "Failed to load aggregated files")
+                .context("Failed to load aggregated files")
                 .and_then(|files| {
                     self.create_archive(files)
-                        .with_context(|| "Failed to create aggregate")
+                        .context("Failed to create aggregate")
                 })
                 .and_then(|data| {
                     log::debug!("Archive size: {}", data.len());
@@ -161,16 +161,16 @@ impl<'a> Push<'a> {
                     let mut chunk = self
                         .chunks_repository
                         .find_by_file_uuid_and_index(&aggregate.uuid, 0)
-                        .with_context(|| "Failed to find chunk 1/1")?
+                        .context("Failed to find chunk 1/1")?
                         .ok_or_else(|| anyhow!("Failed to find chunk 1/1"))?;
 
                     chunk.payload_size = data.len() as u64;
 
                     self.chunks_repository
                         .update(&chunk)
-                        .with_context(|| "Failed to update payload size of chunk 1/1")?;
+                        .context("Failed to update payload size of chunk 1/1")?;
                     self.process_chunk(&mut Cursor::new(data), &aggregate, &chunk)
-                        .with_context(|| "Failed to process chunk 1/1")
+                        .context("Failed to process chunk 1/1")
                 })
             {
                 log::error!(
@@ -201,9 +201,7 @@ impl<'a> Push<'a> {
                 .with_context(|| format!("Failed to add {} to archive", file.file_path))?;
         }
 
-        archive
-            .finish()
-            .with_context(|| "Failed to finalize archive")?;
+        archive.finish().context("Failed to finalize archive")?;
 
         Ok(archive.into_inner().expect("read from memory"))
     }
@@ -214,10 +212,10 @@ impl<'a> Push<'a> {
     {
         source
             .seek(SeekFrom::Start(chunk.offset))
-            .with_context(|| "Failed to seek")?;
+            .context("Failed to seek")?;
 
         let mut data = vec![0; chunk.payload_size as usize];
-        if chunk.payload_size as usize > source.read(&mut data).with_context(|| "Failed to read")? {
+        if chunk.payload_size as usize > source.read(&mut data).context("Failed to read")? {
             // fixme this is not an error, we need to deal with it
             bail!(
                 "Failed to read: read {} bytes instead of {} bytes",

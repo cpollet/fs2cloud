@@ -63,7 +63,7 @@ impl<'a> Crawl<'a> {
         log::info!("Scanning files in `{}`...", self.root_folder);
 
         fs::read_dir(self.root_folder)
-            .with_context(|| "Failed to read root folder")
+            .context("Failed to read root folder")
             .map(|dir| {
                 self.visit_dir(&PathBuf::from(self.root_folder), dir);
             })
@@ -88,7 +88,7 @@ impl<'a> Crawl<'a> {
     }
 
     fn visit_path(&mut self, path: &PathBuf) -> Result<()> {
-        let metadata = fs::metadata(path).with_context(|| "Failed to get metadata")?;
+        let metadata = fs::metadata(path).context("Failed to get metadata")?;
 
         if metadata.is_file() {
             return self.visit_file(path, &metadata);
@@ -126,7 +126,7 @@ impl<'a> Crawl<'a> {
         let db_file = match self
             .files_repository
             .find_by_path(local_path.as_os_str().to_str().unwrap())
-            .with_context(|| "Failed to load files from database")?
+            .context("Failed to load files from database")?
         {
             Some(db_file) => db_file,
             None => {
@@ -140,7 +140,7 @@ impl<'a> Crawl<'a> {
                 };
                 self.files_repository
                     .insert(&db_file)
-                    .with_context(|| "Failed to insert file in database")?;
+                    .context("Failed to insert file in database")?;
 
                 if let Err(e) = crate::fuse::fs::insert(
                     &db_file.uuid,
@@ -213,7 +213,7 @@ impl<'a> Crawl<'a> {
         if self
             .aggregates_repository
             .find_by_file_path(&db_file.path)
-            .with_context(|| "Failed to get aggregate information")?
+            .context("Failed to get aggregate information")?
             .is_some()
         {
             return Ok(());
@@ -221,14 +221,14 @@ impl<'a> Crawl<'a> {
 
         let aggregate = self
             .get_aggregate_path(filesize)
-            .with_context(|| "Failed to get aggregate")?;
+            .context("Failed to get aggregate")?;
 
         self.aggregates_repository
             .insert(&Aggregate {
                 aggregate_path: aggregate,
                 file_path: db_file.path,
             })
-            .with_context(|| "Failed to save aggregate information")
+            .context("Failed to save aggregate information")
             .and(Ok(()))
     }
 
@@ -248,7 +248,7 @@ impl<'a> Crawl<'a> {
             };
             file_repository
                 .insert(&db_file)
-                .with_context(|| "Failed to save aggregate file in database")?;
+                .context("Failed to save aggregate file in database")?;
 
             let chunk = Chunk {
                 uuid: Uuid::new_v4(),
@@ -262,7 +262,7 @@ impl<'a> Crawl<'a> {
             };
             chunks_repository
                 .insert(&chunk)
-                .with_context(|| "Failed to save aggregate chunk in database")?;
+                .context("Failed to save aggregate chunk in database")?;
 
             Ok(CurrentAggregate {
                 path: db_file.path,

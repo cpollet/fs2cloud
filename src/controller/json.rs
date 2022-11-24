@@ -65,7 +65,7 @@ pub mod export {
         let mut json_files = Vec::new();
         for db_file in files_repository
             .find_all()
-            .with_context(|| "Failed to get files from database")?
+            .context("Failed to get files from database")?
         {
             let chunks = chunks_repository
                 .find_by_file_uuid(&db_file.uuid)
@@ -78,7 +78,7 @@ pub mod export {
 
         println!(
             "{}",
-            serde_json::to_string(&json_files).with_context(|| "Failed to serialize files")?
+            serde_json::to_string(&json_files).context("Failed to serialize files")?
         );
         Ok(())
     }
@@ -98,7 +98,7 @@ pub mod import {
 
     pub fn execute(sqlite: PooledSqliteConnectionManager) -> Result<()> {
         serde_json::from_reader::<_, Vec<JsonFile>>(io::stdin())
-            .with_context(|| "Failed to read from stdin")
+            .context("Failed to read from stdin")
             .map(|files| {
                 for file in files {
                     if let Err(e) = handle_file(
@@ -121,7 +121,7 @@ pub mod import {
     ) -> Result<()> {
         if files_repository
             .find_by_path(&file.path)
-            .with_context(|| "Failed to get file from database")?
+            .context("Failed to get file from database")?
             .is_some()
         {
             log::info!("File {} already exists in database; skipping", file.path);
@@ -139,7 +139,7 @@ pub mod import {
 
         files_repository
             .insert(&db_file)
-            .with_context(|| "Failed to insert file in database")?;
+            .context("Failed to insert file in database")?;
 
         for chunk in file.chunks.as_slice() {
             let db_chunk = Chunk {

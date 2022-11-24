@@ -99,7 +99,7 @@ impl ClearChunk {
         let bytes = Vec::<u8>::try_from(&self).unwrap();
         let mut writer = Vec::<u8>::with_capacity(bytes.len());
         pgp.encrypt(&mut bytes.as_slice(), &mut writer)
-            .with_context(|| "Failed to encrypt")?;
+            .context("Failed to encrypt")?;
         Ok(LocalEncryptedChunk {
             chunk: self,
             payload: writer,
@@ -161,7 +161,7 @@ impl LocalEncryptedChunk {
     pub fn push(self, store: Arc<Box<dyn Store>>, runtime: Arc<Runtime>) -> Result<Self> {
         runtime
             .block_on(store.put(self.chunk.uuid, self.payload.as_slice()))
-            .with_context(|| "Failed to upload")?;
+            .context("Failed to upload")?;
         Ok(self)
     }
 
@@ -178,11 +178,11 @@ impl LocalEncryptedChunk {
                 &self.chunk.sha256(),
                 self.payload.len() as u64,
             )
-            .with_context(|| "Failed to finalize chunk")?;
+            .context("Failed to finalize chunk")?;
 
         let chunks = chunks_repository
             .find_siblings_by_uuid(&self.uuid())
-            .with_context(|| "Failed to finalize file")?;
+            .context("Failed to finalize file")?;
 
         if chunks.is_empty() {
             bail!("Failed to finalize file: no chunks found in database");
@@ -212,7 +212,7 @@ impl LocalEncryptedChunk {
 
             files_repository
                 .mark_done(&file_uuid, &sha256)
-                .with_context(|| "Failed to finalize file")?;
+                .context("Failed to finalize file")?;
 
             log::info!("{} done", self.metadata().file);
         }

@@ -57,7 +57,7 @@ impl S3Official {
             .checksum_sha256(Self::sha256(data))
             .send()
             .await
-            .with_context(|| "Failed to upload")?;
+            .context("Failed to upload")?;
 
         log::debug!("{}: upload completed", object_id);
         Ok(())
@@ -72,7 +72,7 @@ impl S3Official {
             .key(Self::path(object_id))
             .send()
             .await
-            .with_context(|| "Failed to initialize multipart upload")?;
+            .context("Failed to initialize multipart upload")?;
 
         let upload_id = upload.upload_id().unwrap();
 
@@ -164,7 +164,7 @@ impl S3Official {
                 .checksum_sha256(Self::sha256(data))
                 .send()
                 .await
-                .with_context(|| "Failed to complete multipart upload")?;
+                .context("Failed to complete multipart upload")?;
             log::debug!("Completed multipart upload of object {}", object_id);
             Ok(())
         }

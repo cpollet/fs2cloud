@@ -1,4 +1,3 @@
-use crate::file::Mode;
 use anyhow::{bail, Error, Result};
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSqlOutput, ValueRef};
 use rusqlite::ToSql;
