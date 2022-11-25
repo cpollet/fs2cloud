@@ -230,7 +230,7 @@ impl<'a> Push<'a> {
 
         let chunk = ClearChunk::new(
             chunk.uuid,
-            Metadata::new(file.path.clone(), chunk.idx, file.chunks),
+            Metadata::new(file.path.clone(), chunk.idx, file.chunks, chunk.offset),
             data,
         );
         let pgp = self.pgp.clone();

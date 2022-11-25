@@ -3,7 +3,7 @@ extern crate core;
 use crate::chunk::repository::Repository as ChunksRepository;
 use crate::config::Config;
 use crate::controller::json::{export, import};
-use crate::controller::{crawl, ls, mount};
+use crate::controller::{crawl, ls, mount, pull};
 use crate::controller::{push, unwrap};
 use crate::database::PooledSqliteConnectionManager;
 use crate::error::Error;
@@ -107,6 +107,15 @@ fn run() -> Result<()> {
             ThreadPool::new(config.get_max_workers_count(), config.get_max_queue_size()),
             Builder::new_current_thread().enable_all().build()?,
         ),
+        Some(("pull", args)) => pull::execute(
+            args.value_of("from").unwrap(),
+            args.value_of("to").unwrap(),
+            PooledSqliteConnectionManager::try_from(&config)?,
+            Pgp::try_from(&config)?,
+            Box::<dyn Store>::try_from(&config)?,
+            ThreadPool::new(config.get_max_workers_count(), config.get_max_queue_size()),
+            Builder::new_current_thread().enable_all().build()?,
+        ),
         Some(("unwrap", args)) => {
             unwrap::execute(args.value_of("path").unwrap(), Pgp::try_from(&config)?)
         }
@@ -160,6 +169,27 @@ fn cli() -> Command<'static> {
         .subcommand(Command::new("import").about("Import database from JSON (reads from stdin)"))
         .subcommand(Command::new("ls").about("Lists files from database"))
         .subcommand(Command::new("push").about("Copy crawled files to cloud"))
+        .subcommand(
+            Command::new("pull")
+                .about("Pulls a file from cloud store")
+                .arg(
+                    Arg::new("from")
+                        .help("Path of the file to pull")
+                        .long("from")
+                        .short('i')
+                        .required(true)
+                        .takes_value(true)
+                        .forbid_empty_values(true),
+                )
+                .arg(
+                    Arg::new("to")
+                        .long("to")
+                        .short('o')
+                        .help("Path to where to save the pulled file")
+                        .takes_value(true)
+                        .required(true),
+                ),
+        )
         .subcommand(
             Command::new("unwrap")
                 .about("Unwrap chunk to return raw data")

@@ -43,11 +43,18 @@ pub struct Metadata {
     idx: u64,
     /// total chunks count for that file
     total: u64,
+    /// offset of the chunk
+    offset: u64,
 }
 
 impl Metadata {
-    pub fn new(file: String, idx: u64, total: u64) -> Self {
-        Self { file, idx, total }
+    pub fn new(file: String, idx: u64, total: u64, offset: u64) -> Self {
+        Self {
+            file,
+            idx,
+            total,
+            offset,
+        }
     }
 
     pub fn file(&self) -> &str {
@@ -60,6 +67,10 @@ impl Metadata {
 
     pub fn total(&self) -> u64 {
         self.total
+    }
+
+    pub fn offset(&self) -> u64 {
+        self.offset
     }
 }
 
@@ -152,6 +163,7 @@ impl From<LocalEncryptedChunk> for ClearChunk {
     }
 }
 
+// todo find better name
 pub struct LocalEncryptedChunk {
     chunk: ClearChunk,
     payload: Vec<u8>,
@@ -244,6 +256,7 @@ impl EncryptedChunk for LocalEncryptedChunk {
     }
 }
 
+// todo find better name
 pub struct RemoteEncryptedChunk {
     payload: Vec<u8>,
 }
@@ -251,6 +264,20 @@ pub struct RemoteEncryptedChunk {
 impl From<Vec<u8>> for RemoteEncryptedChunk {
     fn from(payload: Vec<u8>) -> Self {
         Self { payload }
+    }
+}
+
+impl TryFrom<(&Uuid, &Box<dyn Store>, Arc<Runtime>)> for RemoteEncryptedChunk {
+    type Error = Error;
+
+    fn try_from(
+        source: (&Uuid, &Box<dyn Store>, Arc<Runtime>),
+    ) -> std::result::Result<Self, Self::Error> {
+        let (uuid, store, runtime) = source;
+
+        runtime
+            .block_on(store.get(*uuid))
+            .map(RemoteEncryptedChunk::from)
     }
 }
 

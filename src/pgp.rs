@@ -186,6 +186,7 @@ impl TryFrom<&Config> for Pgp {
     type Error = Error;
 
     fn try_from(config: &Config) -> Result<Self, Self::Error> {
+        // todo understand why this takes an eternity
         Pgp::new(
             config.get_pgp_key()?,
             config.get_pgp_passphrase(),

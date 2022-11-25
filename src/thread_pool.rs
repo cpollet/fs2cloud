@@ -7,6 +7,7 @@ pub struct ThreadPool {
     workers: usize,
     worker_threads: Vec<Worker>,
     sender: mpsc::SyncSender<Message>,
+    callback: Option<Box<dyn FnMut()>>,
 }
 
 struct Worker {
@@ -35,7 +36,17 @@ impl ThreadPool {
             workers,
             worker_threads,
             sender,
+            callback: None,
         }
+    }
+
+    pub fn with_callback(mut self, callback: Box<dyn FnMut()>) -> Self {
+        self.callback = Some(callback);
+        self
+    }
+
+    pub fn workers(&self) -> usize {
+        self.workers
     }
 
     pub fn execute<F>(&self, f: F) -> Result<()>
@@ -63,6 +74,9 @@ impl Drop for ThreadPool {
                 t.join().unwrap();
             }
         });
+        if let Some(callback) = &mut self.callback {
+            callback();
+        }
     }
 }
 
