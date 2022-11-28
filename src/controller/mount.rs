@@ -239,6 +239,7 @@ impl Filesystem for Fs2CloudFS {
 }
 
 impl Fs2CloudFS {
+    // todo create a cached store instead
     fn read_from_store(&self, chunk: &DbChunk) -> Result<Vec<u8>> {
         self.read_from_cache(&chunk.uuid)
             .map(Ok)

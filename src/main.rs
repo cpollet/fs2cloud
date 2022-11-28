@@ -108,8 +108,10 @@ fn run() -> Result<()> {
             Builder::new_current_thread().enable_all().build()?,
         ),
         Some(("pull", args)) => pull::execute(
-            args.value_of("from").unwrap(),
-            args.value_of("to").unwrap(),
+            pull::Config {
+                from: args.value_of("from").unwrap(),
+                to: args.value_of("to").unwrap(),
+            },
             PooledSqliteConnectionManager::try_from(&config)?,
             Pgp::try_from(&config)?,
             Box::<dyn Store>::try_from(&config)?,

@@ -116,6 +116,10 @@ impl ClearChunk {
             payload: writer,
         })
     }
+
+    pub fn unwrap_payload(self) -> Vec<u8> {
+        self.payload
+    }
 }
 
 impl Chunk for ClearChunk {
@@ -264,20 +268,6 @@ pub struct RemoteEncryptedChunk {
 impl From<Vec<u8>> for RemoteEncryptedChunk {
     fn from(payload: Vec<u8>) -> Self {
         Self { payload }
-    }
-}
-
-impl TryFrom<(&Uuid, &Box<dyn Store>, Arc<Runtime>)> for RemoteEncryptedChunk {
-    type Error = Error;
-
-    fn try_from(
-        source: (&Uuid, &Box<dyn Store>, Arc<Runtime>),
-    ) -> std::result::Result<Self, Self::Error> {
-        let (uuid, store, runtime) = source;
-
-        runtime
-            .block_on(store.get(*uuid))
-            .map(RemoteEncryptedChunk::from)
     }
 }
 

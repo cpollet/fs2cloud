@@ -1,5 +1,5 @@
 use crate::store::Store;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use std::fs;
 use std::fs::OpenOptions;
@@ -39,9 +39,13 @@ impl Store for Local {
 
         log::debug!("Reading chunk {} from {}", object_id, path.display());
 
-        let mut file = OpenOptions::new().read(true).open(path)?;
+        let mut file = OpenOptions::new()
+            .read(true)
+            .open(path)
+            .with_context(|| format!("Failed to read {}", object_id))?;
         let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes)?;
+        file.read_to_end(&mut bytes)
+            .with_context(|| format!("Failed to read {}", object_id))?;
 
         Ok(bytes)
     }

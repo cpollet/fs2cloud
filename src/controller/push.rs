@@ -140,6 +140,7 @@ impl<'a> Push<'a> {
     }
 
     fn process_aggregated_files(&mut self) -> Result<()> {
+        // todo files are not marked as done once the aggregate is done
         log::info!("Processing aggregate files...");
         let aggregates = self
             .files_repository

@@ -8,9 +8,6 @@ ignore:
   - "**/Thumbs.db"
   - "**/.DS_Store"
 
-# total memory consumption is given by `chunks.size * (workers + queue_size)`
-# i.e. 90MB chunks * 8 in progress + 8 in the queue = ~1.5GB RAM
-
 # max amount of worker threads. Valid values: >= 1
 workers: 8
 # max job queue length. With large enough chunks, keeping this value equal
