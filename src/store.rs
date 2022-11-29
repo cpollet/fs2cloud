@@ -1,3 +1,4 @@
+use crate::store::cache::Cache;
 use crate::store::local::Local;
 use crate::store::log::Log;
 use crate::store::s3::S3;
@@ -7,6 +8,7 @@ use anyhow::{Context, Error, Result};
 use async_trait::async_trait;
 use uuid::Uuid;
 
+mod cache;
 pub mod local;
 pub mod log;
 pub mod s3;
@@ -62,6 +64,15 @@ impl TryFrom<&Config> for Box<dyn Store> {
     type Error = Error;
 
     fn try_from(config: &Config) -> Result<Self, Self::Error> {
-        new(config).context("Unable to instantiate store")
+        let store = new(config).context("Failed to instantiate store")?;
+
+        let store = match config.get_cache_folder() {
+            None => store,
+            Some(cache_folder) => {
+                Box::new(Cache::new(store, cache_folder).context("Failed to instantiate cache")?)
+            }
+        };
+
+        Ok(store)
     }
 }

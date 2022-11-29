@@ -6,8 +6,8 @@ use uuid::Uuid;
 pub struct Log {}
 
 impl Log {
-    pub fn new() -> Log {
-        Log {}
+    pub fn new() -> Self {
+        Self {}
     }
 }
 

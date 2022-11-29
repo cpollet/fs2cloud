@@ -11,7 +11,12 @@ pub struct S3 {
 
 impl S3 {
     // todo should not take Option as parameter
-    pub fn new(region: &str, bucket: &str, key: Option<&str>, secret: Option<&str>) -> Result<S3> {
+    pub fn new(
+        region: &str,
+        bucket: &str,
+        key: Option<&str>,
+        secret: Option<&str>,
+    ) -> Result<Self> {
         Ok(S3 {
             bucket: Bucket::new(
                 bucket,

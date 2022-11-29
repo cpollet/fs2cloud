@@ -19,14 +19,14 @@ pub struct S3Official {
 const MIN_MULTIPART_SIZE: u64 = 5_242_880; // 5 MiB
 
 impl S3Official {
-    pub fn new(bucket: &str, multipart_size: u64) -> Result<S3Official> {
+    pub fn new(bucket: &str, multipart_size: u64) -> Result<Self> {
         let config = Builder::new_current_thread()
             .enable_all()
             .build()?
             .block_on(aws_config::load_from_env());
         let client = Client::new(&config);
 
-        Ok(S3Official {
+        Ok(Self {
             bucket: bucket.to_string(),
             multipart_size: if multipart_size >= MIN_MULTIPART_SIZE {
                 multipart_size
