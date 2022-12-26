@@ -4,6 +4,8 @@ use anyhow::{bail, Result};
 use fallible_iterator::FallibleIterator;
 use r2d2::Pool;
 use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::types::Type;
+use rusqlite::Error::InvalidColumnType;
 use rusqlite::{params_from_iter, OptionalExtension, Row};
 use uuid::Uuid;
 
@@ -155,6 +157,11 @@ impl Repository {
 
         let mut stmt = connection.prepare("select sum(size) from files where status = :status")?;
 
-        Ok(stmt.query_row(&[(":status", &status)], |row| row.get::<_, u64>(0))?)
+        Ok(
+            stmt.query_row(&[(":status", &status)], |row| match row.get::<_, u64>(0) {
+                Err(InvalidColumnType(_, _, Type::Null)) => Ok(0),
+                r => r,
+            })?,
+        )
     }
 }
