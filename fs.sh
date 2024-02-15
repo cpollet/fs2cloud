@@ -1,7 +1,7 @@
 #!/bin/bash
-release=1
+release=0
 
-export RUST_LOG="warn,fs2cloud::controller::mount=trace"
+export RUST_LOG="warn,fs2cloud=info,fs2cloud::store=debug,fs2cloud::controller::mount=trace"
 mkdir -p /tmp/fuse
 sudo umount /tmp/fuse
 

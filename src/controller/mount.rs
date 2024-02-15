@@ -1,9 +1,11 @@
 use crate::chunk::repository::{Chunk as DbChunk, Repository as ChunksRepository};
-use crate::chunk::{Chunk, EncryptedChunk, RemoteEncryptedChunk};
-use crate::file::repository::Repository as FilesRepository;
+use crate::chunk::ClearChunk;
+use crate::aggregate::repository::Repository as AggregatesRepository;
+use crate::file::repository::{File, Repository as FilesRepository};
+use crate::file::Mode;
 use crate::fuse::fs::repository::{Inode, Repository as FsRepository};
 use crate::store::Store;
-use crate::{Error, Pgp, PooledSqliteConnectionManager};
+use crate::{Error, PooledSqliteConnectionManager};
 use anyhow::{Context, Result};
 use fuser::{
     FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
@@ -12,38 +14,28 @@ use fuser::{
 use libc::{ENOENT, SIGINT};
 use signal_hook::iterator::Signals;
 use std::ffi::OsStr;
-use std::fs::OpenOptions;
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 use tokio::runtime::Runtime;
-use uuid::Uuid;
 
 pub struct Config<'a> {
-    pub cache_folder: Option<&'a str>,
     pub mountpoint: &'a str,
 }
 
 pub fn execute(
     config: Config,
     sqlite: PooledSqliteConnectionManager,
-    pgp: Pgp,
     store: Box<dyn Store>,
     runtime: Runtime,
 ) -> Result<()> {
     let options = vec![MountOption::RO, MountOption::FSName("fs2cloud".to_string())];
-
-    if let Some(path) = config.cache_folder {
-        std::fs::create_dir_all(path)?;
-    }
-
     let fs = Fs2CloudFS {
-        cache: config.cache_folder.map(PathBuf::from),
         fs_repository: FsRepository::new(sqlite.clone()),
         files_repository: FilesRepository::new(sqlite.clone()),
-        chunks_repository: ChunksRepository::new(sqlite),
-        pgp: Arc::new(pgp),
+        chunks_repository: ChunksRepository::new(sqlite.clone()),
+        aggregates_repository: AggregatesRepository::new(sqlite),
         store: Arc::new(store),
         runtime: Arc::new(runtime),
     };
@@ -63,11 +55,10 @@ pub fn execute(
 }
 
 struct Fs2CloudFS {
-    cache: Option<PathBuf>,
     fs_repository: FsRepository,
     files_repository: FilesRepository,
     chunks_repository: ChunksRepository,
-    pgp: Arc<Pgp>,
+    aggregates_repository: AggregatesRepository,
     store: Arc<Box<dyn Store>>,
     runtime: Arc<Runtime>,
 }
@@ -125,6 +116,7 @@ impl Filesystem for Fs2CloudFS {
         _lock: Option<u64>,
         reply: ReplyData,
     ) {
+        // todo implement support for aggregated files
         log::trace!("read(ino:{}, offset:{}, size:{})", ino, offset, size);
         let inode = match self.fs_repository.find_inode_by_id(Inode::from_fs_ino(ino)) {
             Ok(Some(inode)) => {
@@ -148,11 +140,16 @@ impl Filesystem for Fs2CloudFS {
             }
         };
 
-        let chunks = match self
-            .chunks_repository
-            .find_by_file_uuid(&inode.file_uuid.unwrap())
+        let file = match self
+            .files_repository
+            .find_by_uuid(&inode.file_uuid.unwrap())
         {
-            Ok(chunks) => chunks,
+            Ok(Some(file)) => file,
+            Ok(None) => {
+                log::error!("read(ino:{}) -> file not found", ino);
+                reply.error(ENOENT);
+                return;
+            }
             Err(e) => {
                 log::error!("read(ino:{}) -> error: {}", ino, e);
                 reply.error(ENOENT);
@@ -160,44 +157,14 @@ impl Filesystem for Fs2CloudFS {
             }
         };
 
-        let mut data: Vec<u8> = Vec::new();
-        let mut offset = offset as u64;
-        for chunk in chunks {
-            log::trace!(
-                "chunk {}: offset={}, buffer={}",
-                chunk.idx,
-                offset,
-                data.len()
-            );
-            if offset > chunk.payload_size {
-                log::trace!("chunk {} comes before; skipping", chunk.idx);
-                offset -= chunk.payload_size;
-                continue;
+        match file.mode {
+            Mode::Aggregate => {
+                log::error!("read(ino:{}) -> cannot read aggregate files", ino);
+                reply.error(ENOENT);
             }
-            if data.len() >= size as usize {
-                log::trace!("read {} bytes; we are done", data.len());
-                break;
-            }
-
-            match self.read_from_store(&chunk) {
-                Ok(payload) => {
-                    log::trace!("read(ino:{}) -> decrypted {} bytes", ino, payload.len());
-                    data.write_all(payload.as_slice()).unwrap()
-                }
-                Err(e) => {
-                    log::error!("read(ino:{}) -> error: {}", ino, e);
-                    reply.error(ENOENT);
-                    return;
-                }
-            };
-
-            if offset > 0 {
-                data.drain(0..offset as usize);
-                offset = 0;
-            }
+            Mode::Chunked => self.read_chunked(inode, offset as u64, size as usize, reply),
+            Mode::Aggregated => self.read_aggregated(inode, file, offset as u64, size as usize, reply)
         }
-        log::trace!("Read {} bytes (requested: {})", data.len(), size);
-        reply.data(&data.as_slice()[0..data.len().min(size as usize)]);
     }
 
     fn readdir(
@@ -239,39 +206,88 @@ impl Filesystem for Fs2CloudFS {
 }
 
 impl Fs2CloudFS {
-    // todo create a cached store instead
-    fn read_from_store(&self, chunk: &DbChunk) -> Result<Vec<u8>> {
-        self.read_from_cache(&chunk.uuid)
-            .map(Ok)
-            .unwrap_or_else(|| {
-                log::debug!("Read chunk {} from store", chunk.uuid);
-                let chunk =
-                    RemoteEncryptedChunk::from(self.runtime.block_on(self.store.get(chunk.uuid))?)
-                        .decrypt(&self.pgp)?;
-                self.write_to_cache(&chunk.uuid(), chunk.payload());
-                Ok(chunk.payload().into())
-            })
+    fn read_chunk(&self, chunk: &DbChunk) -> Result<Vec<u8>> {
+        log::debug!("Read chunk {} from store", chunk.uuid);
+        let chunk = ClearChunk::try_from(&self.runtime.block_on(self.store.get(chunk.uuid))?)?;
+
+        Ok(chunk.take_payload())
     }
 
-    fn read_from_cache(&self, chunk: &Uuid) -> Option<Vec<u8>> {
-        self.cache
-            .as_ref()
-            .map(|path| path.join(Path::new(&chunk.to_string())))
-            .and_then(|path| OpenOptions::new().read(true).open(path).ok())
-            .and_then(|mut file| {
-                let mut bytes = Vec::new();
-                file.read_to_end(&mut bytes).ok().map(|_| bytes)
-            })
-    }
-
-    fn write_to_cache(&self, chunk: &Uuid, data: &[u8]) {
-        if let Some(mut file) = self
-            .cache
-            .as_ref()
-            .map(|path| path.join(Path::new(&chunk.to_string())))
-            .and_then(|path| OpenOptions::new().create(true).write(true).open(path).ok())
+    fn read_chunked(&self, inode: Inode, offset: u64, size: usize, reply: ReplyData) {
+        let chunks = match self
+            .chunks_repository
+            .find_by_file_uuid(&inode.file_uuid.unwrap())
         {
-            let _ = file.write_all(data);
+            Ok(chunks) => chunks,
+            Err(e) => {
+                log::error!("read(ino:{}) -> error: {}", inode.to_fs_ino(), e);
+                reply.error(ENOENT);
+                return;
+            }
+        };
+
+        let mut data: Vec<u8> = Vec::new();
+        let mut offset = offset;
+        for chunk in chunks {
+            log::trace!(
+                "chunk {}: offset={}, buffer={}",
+                chunk.idx,
+                offset,
+                data.len()
+            );
+            if offset > chunk.payload_size {
+                log::trace!("chunk {} comes before; skipping", chunk.idx);
+                offset -= chunk.payload_size;
+                continue;
+            }
+            if data.len() >= size {
+                log::trace!("read {} bytes; we are done", data.len());
+                break;
+            }
+
+            match self.read_chunk(&chunk) {
+                Ok(payload) => {
+                    log::trace!(
+                        "read(ino:{}) -> read {} bytes",
+                        inode.to_fs_ino(),
+                        payload.len()
+                    );
+                    data.write_all(payload.as_slice()).unwrap()
+                }
+                Err(e) => {
+                    log::error!("read(ino:{}) -> error: {}", inode.to_fs_ino(), e);
+                    reply.error(ENOENT);
+                    return;
+                }
+            };
+
+            if offset > 0 {
+                data.drain(0..offset as usize);
+                offset = 0;
+            }
+        }
+        log::trace!("Read {} bytes (requested: {})", data.len(), size);
+        reply.data(&data.as_slice()[0..data.len().min(size)]);
+    }
+
+    fn read_aggregated(&self, inode: Inode, file: File, offset: u64, size: usize, reply: ReplyData) {
+        let aggregate = match self.aggregates_repository.find_by_file_path(&file.path) {
+            Ok(Some(aggregate)) => aggregate,
+            Ok(None) =>  {
+                log::error!("read(ino:{}) -> failed to read aggregate information", inode.to_fs_ino());
+                reply.error(ENOENT);
+                return;
+            }
+            Err(e) => {
+                log::error!("read(ino:{}) -> error: {}", inode.to_fs_ino(), e);
+                reply.error(ENOENT);
+                return;
+            }
+        };
+
+        let file = match self.files_repository.find_by_path(&aggregate.aggregate_path) {
+            Ok(file) => file,
+            Err(_) => {}
         }
     }
 }

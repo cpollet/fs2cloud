@@ -9,7 +9,7 @@ use crate::database::PooledSqliteConnectionManager;
 use crate::error::Error;
 use crate::file::repository::Repository as FilesRepository;
 use crate::pgp::Pgp;
-use crate::store::Store;
+use crate::store::{Store, StoreBuilder};
 use crate::thread_pool::ThreadPool;
 use anyhow::{bail, Result};
 use clap::{command, Arg, Command};
@@ -85,12 +85,13 @@ fn run() -> Result<()> {
         }
         Some(("mount", args)) => mount::execute(
             mount::Config {
-                cache_folder: config.get_cache_folder(),
                 mountpoint: args.value_of("mountpoint").unwrap(),
             },
             PooledSqliteConnectionManager::try_from(&config)?,
-            Pgp::try_from(&config)?,
-            Box::<dyn Store>::try_from(&config)?,
+            StoreBuilder::new(&config)?
+                .encrypted(Pgp::try_from(&config)?)
+                .cached(&config)?
+                .build(),
             Builder::new_current_thread().enable_all().build()?,
         ),
         Some(("import", _args)) => {
@@ -102,8 +103,10 @@ fn run() -> Result<()> {
                 root_folder: config.get_root_path()?,
             },
             PooledSqliteConnectionManager::try_from(&config)?,
-            Pgp::try_from(&config)?,
-            Box::<dyn Store>::try_from(&config)?,
+            StoreBuilder::new(&config)?
+                .encrypted(Pgp::try_from(&config)?)
+                .cached(&config)?
+                .build(),
             ThreadPool::new(config.get_max_workers_count(), config.get_max_queue_size()),
             Builder::new_current_thread().enable_all().build()?,
         ),
@@ -113,8 +116,10 @@ fn run() -> Result<()> {
                 to: args.value_of("to").unwrap(),
             },
             PooledSqliteConnectionManager::try_from(&config)?,
-            Pgp::try_from(&config)?,
-            Box::<dyn Store>::try_from(&config)?,
+            StoreBuilder::new(&config)?
+                .encrypted(Pgp::try_from(&config)?)
+                .cached(&config)?
+                .build(),
             ThreadPool::new(config.get_max_workers_count(), config.get_max_queue_size()),
             Builder::new_current_thread().enable_all().build()?,
         ),

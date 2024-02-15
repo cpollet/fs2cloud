@@ -1,10 +1,8 @@
 use crate::aggregate::repository::Repository as AggregateRepository;
-use crate::chunk::{Chunk, EncryptedChunk, RemoteEncryptedChunk};
+use crate::chunk::{Chunk, ClearChunk};
 use crate::file::repository::File as DbFile;
 use crate::file::Mode;
-use crate::{
-    ChunksRepository, FilesRepository, Pgp, PooledSqliteConnectionManager, Store, ThreadPool,
-};
+use crate::{ChunksRepository, FilesRepository, PooledSqliteConnectionManager, Store, ThreadPool};
 use anyhow::{anyhow, bail, Context, Result};
 use std::fs::File;
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
@@ -23,7 +21,6 @@ pub struct Config<'a> {
 pub fn execute(
     config: Config,
     sqlite: PooledSqliteConnectionManager,
-    pgp: Pgp,
     store: Box<dyn Store>,
     thread_pool: ThreadPool,
     runtime: Runtime,
@@ -34,7 +31,6 @@ pub fn execute(
         files_repository: FilesRepository::new(sqlite.clone()),
         chunks_repository: ChunksRepository::new(sqlite.clone()),
         aggregate_repository: AggregateRepository::new(sqlite),
-        pgp: Arc::new(pgp),
         store: Arc::new(store),
         thread_pool,
         runtime: Arc::new(runtime),
@@ -48,7 +44,6 @@ struct Pull<'a> {
     files_repository: FilesRepository,
     chunks_repository: ChunksRepository,
     aggregate_repository: AggregateRepository,
-    pgp: Arc<Pgp>,
     store: Arc<Box<dyn Store>>,
     thread_pool: ThreadPool,
     runtime: Arc<Runtime>,
@@ -158,17 +153,11 @@ impl<'a> Pull<'a> {
                     .ok_or_else(|| anyhow!("Failed to find first chunk of aggregate in database"))
             })
             .and_then(|chunk| {
-                Ok(RemoteEncryptedChunk::from(
-                    self.runtime
-                        .block_on(self.store.get(chunk.uuid))
-                        .context("Failed get aggregate data from store")?,
-                ))
+                self.runtime
+                    .block_on(self.store.get(chunk.uuid))
+                    .context("Failed get aggregate data from store")
             })
-            .and_then(|cipher_chunk| {
-                cipher_chunk
-                    .decrypt(self.pgp.as_ref())
-                    .context("Failed to decrypt aggregate")
-            })?;
+            .map(|byes| ClearChunk::try_from(&byes).unwrap())?;
 
         let mut archive = Archive::new(Cursor::new(chunk.payload()));
         let mut vec = Vec::<u8>::with_capacity(file.size as usize);
@@ -219,7 +208,6 @@ impl<'a> Pull<'a> {
             );
 
             let store = self.store.clone();
-            let pgp = self.pgp.clone();
             let sender = sender.clone();
             let runtime = self.runtime.clone();
             let uuid = file.uuid;
@@ -228,14 +216,12 @@ impl<'a> Pull<'a> {
                 if let Err(e) = runtime
                     .block_on(store.get(uuid))
                     .context("Failed to download chunk")
-                    .map(RemoteEncryptedChunk::from)
-                    .and_then(|cipher_chunk| cipher_chunk.decrypt(&pgp))
-                    .context("Failed to decrypt chunk")
+                    .map(|byes| ClearChunk::try_from(&byes).unwrap())
                     .and_then(|clear_chunk| {
                         sender
                             .send(Message::Chunk {
                                 offset: clear_chunk.metadata().offset(),
-                                payload: clear_chunk.unwrap_payload(),
+                                payload: clear_chunk.take_payload(),
                             })
                             .context("Failed to save decrypted chunk")
                     })

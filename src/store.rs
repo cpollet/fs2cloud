@@ -1,14 +1,16 @@
 use crate::store::cache::Cache;
+use crate::store::encrypt::Encrypt;
 use crate::store::local::Local;
 use crate::store::log::Log;
 use crate::store::s3::S3;
 use crate::store::s3_official::S3Official;
-use crate::Config;
-use anyhow::{Context, Error, Result};
+use crate::{Config, Pgp};
+use anyhow::{Context, Result};
 use async_trait::async_trait;
 use uuid::Uuid;
 
 mod cache;
+mod encrypt;
 pub mod local;
 pub mod log;
 pub mod s3;
@@ -28,7 +30,31 @@ pub enum StoreKind {
     S3Official,
 }
 
-pub fn new(config: &Config) -> Result<Box<dyn Store>> {
+pub struct StoreBuilder {
+    store: Box<dyn Store>,
+}
+
+impl StoreBuilder {
+    pub fn new(config: &Config) -> Result<Self> {
+        Ok(Self {
+            store: (match config.get_store_type() {
+                Ok(StoreKind::Local) => Self::local(config),
+                Ok(StoreKind::Log) => Self::log(),
+                Ok(StoreKind::S3) => Self::s3(config),
+                Ok(StoreKind::S3Official) => Self::s3_official(config),
+                Err(e) => Err(e),
+            })?,
+        })
+    }
+
+    fn local(config: &Config) -> Result<Box<dyn Store>> {
+        Ok(Box::new(Local::new(config.get_local_store_path()?)?))
+    }
+
+    fn log() -> Result<Box<dyn Store>> {
+        Ok(Box::new(Log::new()))
+    }
+
     fn s3(config: &Config) -> Result<Box<dyn Store>> {
         Ok(Box::from(
             S3::new(
@@ -51,28 +77,24 @@ pub fn new(config: &Config) -> Result<Box<dyn Store>> {
         ))
     }
 
-    match config.get_store_type() {
-        Ok(StoreKind::Log) => Ok(Box::new(Log::new())),
-        Ok(StoreKind::S3) => s3(config),
-        Ok(StoreKind::S3Official) => s3_official(config),
-        Ok(StoreKind::Local) => Ok(Box::new(Local::new(config.get_local_store_path()?)?)),
-        Err(e) => Err(e),
+    pub fn cached(self, config: &Config) -> Result<Self> {
+        Ok(match config.get_cache_folder() {
+            None => self,
+            Some(cache_folder) => Self {
+                store: Box::new(
+                    Cache::new(self.store, cache_folder).context("Failed to instantiate cache")?,
+                ),
+            },
+        })
     }
-}
 
-impl TryFrom<&Config> for Box<dyn Store> {
-    type Error = Error;
+    pub fn encrypted(self, pgp: Pgp) -> Self {
+        Self {
+            store: Box::new(Encrypt::new(self.store, pgp)),
+        }
+    }
 
-    fn try_from(config: &Config) -> Result<Self, Self::Error> {
-        let store = new(config).context("Failed to instantiate store")?;
-
-        let store = match config.get_cache_folder() {
-            None => store,
-            Some(cache_folder) => {
-                Box::new(Cache::new(store, cache_folder).context("Failed to instantiate cache")?)
-            }
-        };
-
-        Ok(store)
+    pub fn build(self) -> Box<dyn Store> {
+        self.store
     }
 }

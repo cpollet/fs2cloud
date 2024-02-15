@@ -2,7 +2,7 @@
 release=0
 
 export RUST_BACKTRACE=1
-export RUST_LOG="warn,fs2cloud=info,fs2cloud::controller::pull=debug,fs2cloud::store=debug"
+export RUST_LOG="warn,fs2cloud=info,fs2cloud::store=debug,fs2cloud::controller::pull=debug"
 
 rm -r test/pull/10M
 

@@ -7,7 +7,7 @@ use crate::hash::ChunkedSha256;
 use crate::metrics::{Collector, Metric};
 use crate::status::Status;
 use crate::store::Store;
-use crate::{Pgp, PooledSqliteConnectionManager, ThreadPool};
+use crate::{PooledSqliteConnectionManager, ThreadPool};
 use anyhow::{anyhow, bail, Context, Result};
 use std::collections::HashMap;
 use std::fs::File;
@@ -25,7 +25,6 @@ pub struct Config<'a> {
 pub fn execute(
     config: Config,
     sqlite: PooledSqliteConnectionManager,
-    pgp: Pgp,
     store: Box<dyn Store>,
     thread_pool: ThreadPool,
     runtime: Runtime,
@@ -35,7 +34,6 @@ pub fn execute(
         files_repository: Arc::new(FilesRepository::new(sqlite.clone())),
         chunks_repository: Arc::new(ChunksRepository::new(sqlite.clone())),
         aggregates_repository: AggregatesRepository::new(sqlite),
-        pgp: Arc::new(pgp),
         store: Arc::new(store),
         thread_pool,
         hashes: HashMap::new(),
@@ -50,7 +48,6 @@ struct Push<'a> {
     files_repository: Arc<FilesRepository>,
     chunks_repository: Arc<ChunksRepository>,
     aggregates_repository: AggregatesRepository,
-    pgp: Arc<Pgp>,
     store: Arc<Box<dyn Store>>,
     thread_pool: ThreadPool,
     hashes: HashMap<Uuid, Arc<Mutex<ChunkedSha256>>>,
@@ -234,7 +231,6 @@ impl<'a> Push<'a> {
             Metadata::new(file.path.clone(), chunk.idx, file.chunks, chunk.offset),
             data,
         );
-        let pgp = self.pgp.clone();
         let store = self.store.clone();
         let files_repository = self.files_repository.clone();
         let chunks_repository = self.chunks_repository.clone();
@@ -247,19 +243,18 @@ impl<'a> Push<'a> {
             let idx = chunk.metadata().idx();
             let file = chunk.metadata().file().to_string();
 
-            match chunk.encrypt(&pgp).and_then(|chunk| {
-                chunk
-                    .push(store, runtime)
-                    .and_then(|c| c.finalize(files_repository, chunks_repository, hash, &sender))
-            }) {
-                Ok(_) => {
-                    let _ = sender.send(Metric::ChunkProcessed);
-                    let _ = sender.send(Metric::BytesTransferred(bytes));
-                }
-                Err(e) => {
-                    log::error!("Failed to process chunk {} of {}: {:#}", idx, file, e)
-                }
+            if let Err(e) = chunk.push(store, runtime) {
+                log::error!("Failed to upload chunk: {} of {}: {:#}", idx, file, e);
+                return;
             }
+
+            if let Err(e) = chunk.finalize(files_repository, chunks_repository, hash, &sender) {
+                log::error!("Failed to finalize chunk: {} of {}: {:#}", idx, file, e);
+                return;
+            }
+
+            let _ = sender.send(Metric::ChunkProcessed);
+            let _ = sender.send(Metric::BytesTransferred(bytes));
         })
     }
 }

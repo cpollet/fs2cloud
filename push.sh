@@ -2,7 +2,7 @@
 release=0
 
 export RUST_BACKTRACE=1
-export RUST_LOG="warn,fs2cloud=info,fs2cloud::store::s3_official=trace"
+export RUST_LOG="warn,fs2cloud=info,fs2cloud::store=debug,fs2cloud::store::s3_official=trace,fs2cloud::controller::push=debug"
 
 if [ $release -eq 0 ]; then
   echo "debug mode"
